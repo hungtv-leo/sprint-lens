@@ -7,8 +7,10 @@ Sprint Lens là dashboard nội bộ giúp theo dõi sprint Jira theo project, t
 - Backend: Python FastAPI
 - Frontend: React + TypeScript + Vite
 - UI: Ant Design, Recharts
-- Local: Docker Compose
-- Prod: GitHub Pages (frontend) + Render Free (backend) + GitHub Actions (CI/CD)
+- Chạy: self-host trên máy local (Docker Compose hoặc uvicorn + Vite)
+- CI: GitHub Actions (lint + build)
+
+> Jira nội bộ cần VPN — backend phải chạy trên máy đã kết nối VPN (không dùng Render/cloud public).
 
 ## Cấu trúc
 
@@ -44,9 +46,13 @@ Tạo file `frontend/.env` từ `frontend/.env.example`:
 VITE_API_BASE_URL=http://localhost:8787
 ```
 
-## Chạy local
+## Self-host trên máy local
 
-### 1. Backend
+Bật **VPN công ty** trước khi chạy backend.
+
+### Cách 1 — Hai terminal (dev)
+
+**Terminal 1 — Backend:**
 
 ```bash
 cd backend
@@ -54,7 +60,7 @@ pip install -r requirements.txt
 python -m uvicorn app.main:app --reload --port 8787
 ```
 
-### 2. Frontend
+**Terminal 2 — Frontend:**
 
 ```bash
 cd frontend
@@ -62,7 +68,20 @@ npm install
 npm run dev
 ```
 
-Frontend sẽ chạy trên URL do Vite cung cấp, thường là `http://localhost:5173`.
+Mở: `http://localhost:5173`
+
+Kiểm tra API: `http://localhost:8787/health` → `{"status":"ok"}`
+
+### Cách 2 — Docker Compose
+
+Chuẩn bị `backend/.env` và `frontend/.env`, rồi:
+
+```bash
+docker compose up --build
+```
+
+- Backend: `http://localhost:8787`
+- Frontend: `http://localhost:4173`
 
 ## API endpoints
 
@@ -87,72 +106,9 @@ KPI_PREFER_CURSOR_AGENT=true
 
 Nếu chưa có `CURSOR_API_KEY`, backend dùng `local-skill` agent (áp dụng cứng rule trong skill).
 
-## Docker
+## CI (GitHub Actions)
 
-Chuẩn bị:
-
-- `backend/.env`
-- `frontend/.env`
-
-Sau đó chạy:
-
-```bash
-docker compose up --build
-```
-
-Khi đó:
-
-- Backend: `http://localhost:8787`
-- Frontend: `http://localhost:4173`
-
-## Deploy prod (GitHub Pages + Render Free)
-
-URL dự kiến:
-
-| Phần | URL |
-|------|-----|
-| Frontend | `https://hungtv-leo.github.io/sprint-lens/` |
-| Backend | `https://<service-name>.onrender.com` |
-
-### Bước 1 — Deploy backend lên Render
-
-1. Đăng ký / đăng nhập [Render](https://render.com) bằng GitHub.
-2. **New → Blueprint** → chọn repo `hungtv-leo/sprint-lens` (file `render.yaml`).
-   - Hoặc **New → Web Service** → Docker, Dockerfile `Dockerfile.backend`, root directory `.`.
-3. Điền env (copy từ `backend/.env` local — **không commit** file `.env`):
-   - `JIRA_BASE_URL`
-   - `JIRA_PERSONAL_ACCESS_TOKEN`
-   - `JIRA_DEFAULT_PROJECTS` (optional)
-   - `CACHE_TTL_SECONDS=30`
-4. Deploy xong, mở `https://<service>.onrender.com/health` → kỳ vọng `{"status":"ok"}`.
-5. Copy URL backend (không có trailing slash), ví dụ `https://sprint-lens-api.onrender.com`.
-
-Lưu ý free tier: service có thể **sleep** khi idle; request đầu sau sleep có thể chậm ~30–60 giây. Mỗi push `master` Render sẽ auto-deploy nếu đã connect repo.
-
-### Bước 2 — Cấu hình GitHub
-
-1. Repo **Settings → Pages → Build and deployment → Source: GitHub Actions**.
-2. **Settings → Secrets and variables → Actions → Variables → New repository variable**:
-   - Name: `VITE_API_BASE_URL`
-   - Value: URL Render ở bước 1 (ví dụ `https://sprint-lens-api.onrender.com`).
-
-### Bước 3 — CI/CD tự động
-
-Workflow [`.github/workflows/ci-cd.yml`](.github/workflows/ci-cd.yml):
-
-- Mọi push / PR vào `master`: lint + build frontend, smoke import backend.
-- Push vào `master`: build frontend với `VITE_BASE_PATH=/sprint-lens/` và `VITE_API_BASE_URL`, deploy lên GitHub Pages.
-
-Sau khi merge/push `master`, mở **Actions** theo dõi job **Deploy GitHub Pages**, rồi truy cập:
-
-`https://hungtv-leo.github.io/sprint-lens/`
-
-### Domain free của GitHub
-
-- Project site (mặc định setup này): `https://<user>.github.io/<repo>/`
-- User/org site (nếu đổi tên repo thành `<user>.github.io`): `https://<user>.github.io/`
-
-Không cần mua domain riêng.
+Workflow [`.github/workflows/ci.yml`](.github/workflows/ci.yml) chạy lint + build trên mỗi push/PR `master`. Không deploy cloud.
 
 ## Ghi chú
 
@@ -160,3 +116,4 @@ Không cần mua domain riêng.
 - Backend hiện tại hỗ trợ `Personal Access Token` để kết nối Jira.
 - Bảng hiện tại là chỉ đọc, an toàn cho giai đoạn đầu.
 - Nếu Jira của công ty dùng custom sprint field khác `customfield_10007`, cần cập nhật trong `backend/app/services/jira_service.py`.
+- Site GitHub Pages cũ (nếu còn) không lấy được data Jira vì backend không còn trên internet; dùng `localhost` ở trên.
