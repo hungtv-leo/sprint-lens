@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections import Counter
 from typing import Any
 
@@ -10,7 +11,9 @@ from app.clients.jira_client import JiraClient
 from app.core.cache import TTLCache
 from app.schemas.jira import (
     AssigneeSummaryItem,
+    IssuesResponse,
     JiraAssignee,
+    JiraHealthResponse,
     JiraIssue,
     JiraProject,
     JiraSprint,
@@ -22,13 +25,45 @@ from app.schemas.jira import (
 
 
 TESTING_KEYWORDS = ("test", "testing", "qa", "uat")
+ISSUE_PAGE_SIZE = 100
+ISSUE_HARD_CAP = 1000
+ISSUE_KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]+-\d+$")
 
 
 class JiraService:
-    def __init__(self, client: JiraClient, cache: TTLCache, base_url: str) -> None:
+    def __init__(
+        self,
+        client: JiraClient,
+        cache: TTLCache,
+        base_url: str,
+        sprint_custom_field: str = "customfield_10007",
+    ) -> None:
         self.client = client
         self.cache = cache
         self.base_url = base_url.rstrip("/")
+        self.sprint_custom_field = sprint_custom_field
+
+    async def check_jira_health(self) -> JiraHealthResponse:
+        try:
+            data = await self.client.get("/rest/api/2/myself")
+            return JiraHealthResponse(
+                status="ok",
+                ok=True,
+                display_name=data.get("displayName"),
+                detail=None,
+            )
+        except httpx.HTTPStatusError as exc:
+            return JiraHealthResponse(
+                status="error",
+                ok=False,
+                detail=f"Jira HTTP {exc.response.status_code}",
+            )
+        except Exception as exc:  # noqa: BLE001
+            return JiraHealthResponse(
+                status="error",
+                ok=False,
+                detail=str(exc),
+            )
 
     async def get_projects(self) -> list[JiraProject]:
         cache_key = "projects"
@@ -72,6 +107,27 @@ class JiraService:
 
         statuses = list(seen.values())
         statuses.sort(key=lambda item: (item.category_key, item.name.lower()))
+        return self.cache.set(cache_key, statuses)
+
+    async def get_statuses_for_projects(self, project_keys: list[str]) -> list[JiraStatus]:
+        if not project_keys:
+            raise HTTPException(status_code=400, detail="Cần ít nhất một project key.")
+
+        cache_key = f"statuses:multi:{','.join(project_keys)}"
+        cached = self.cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        merged: dict[str, JiraStatus] = {}
+        for project_key in project_keys:
+            for status in await self.get_statuses(project_key):
+                # Prefer id; fall back to name so same workflow merges cleanly.
+                merged[status.id or status.name] = status
+
+        statuses = sorted(
+            merged.values(),
+            key=lambda item: (item.category_key, item.name.lower()),
+        )
         return self.cache.set(cache_key, statuses)
 
     async def get_sprints(self, project_key: str) -> list[JiraSprint]:
@@ -118,6 +174,26 @@ class JiraService:
             cache_key,
             sorted(sprints.values(), key=lambda item: (item.state != "active", item.name.lower())),
         )
+
+    async def get_sprints_for_projects(self, project_keys: list[str]) -> list[JiraSprint]:
+        if not project_keys:
+            raise HTTPException(status_code=400, detail="Cần ít nhất một project key.")
+
+        cache_key = f"sprints:multi:{','.join(project_keys)}"
+        cached = self.cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        merged: dict[int, JiraSprint] = {}
+        for project_key in project_keys:
+            for sprint in await self.get_sprints(project_key):
+                merged[sprint.id] = sprint
+
+        sprints = sorted(
+            merged.values(),
+            key=lambda item: (item.state != "active", item.name.lower()),
+        )
+        return self.cache.set(cache_key, sprints)
 
     async def get_users(
         self,
@@ -207,7 +283,7 @@ class JiraService:
         query: str | None = None,
         updated_from: str | None = None,
         updated_to: str | None = None,
-    ) -> list[JiraIssue]:
+    ) -> IssuesResponse:
         cache_key = (
             f"issues:{','.join(project_keys)}:{sprint}:{assignee}:{query}:{updated_from}:{updated_to}"
         )
@@ -229,26 +305,63 @@ class JiraService:
             updated_from=updated_from,
             updated_to=updated_to,
         )
-        payload = {
-            "jql": jql,
-            "maxResults": 200,
-            "fields": [
-                "summary",
-                "status",
-                "priority",
-                "assignee",
-                "updated",
-                "duedate",
-                "issuetype",
-                "project",
-                "customfield_10007",
-                "customfield_10002",
-            ],
-        }
 
-        data = await self.client.post("/rest/api/2/search", json=payload)
-        issues = [self._normalize_issue(item) for item in data.get("issues", [])]
-        return self.cache.set(cache_key, issues)
+        issues: list[JiraIssue] = []
+        start_at = 0
+        total = 0
+
+        while True:
+            page_size = min(ISSUE_PAGE_SIZE, ISSUE_HARD_CAP - len(issues))
+            if page_size <= 0:
+                break
+
+            payload = {
+                "jql": jql,
+                "startAt": start_at,
+                "maxResults": page_size,
+                "fields": [
+                    "summary",
+                    "status",
+                    "priority",
+                    "assignee",
+                    "updated",
+                    "duedate",
+                    "issuetype",
+                    "project",
+                    self.sprint_custom_field,
+                    "customfield_10002",
+                ],
+            }
+
+            try:
+                data = await self.client.post("/rest/api/2/search", json=payload)
+            except httpx.HTTPStatusError as exc:
+                detail = "Không truy vấn được Jira search."
+                try:
+                    body = exc.response.json()
+                    messages = body.get("errorMessages") or []
+                    if messages:
+                        detail = "; ".join(str(item) for item in messages)
+                except Exception:  # noqa: BLE001
+                    pass
+                raise HTTPException(status_code=exc.response.status_code, detail=detail) from exc
+
+            total = int(data.get("total") or 0)
+            page_issues = [self._normalize_issue(item) for item in data.get("issues", [])]
+            issues.extend(page_issues)
+
+            start_at += len(page_issues)
+            if not page_issues or start_at >= total or len(issues) >= ISSUE_HARD_CAP:
+                break
+
+        truncated = total > len(issues)
+        result = IssuesResponse(
+            issues=issues,
+            total=total,
+            returned=len(issues),
+            truncated=truncated,
+        )
+        return self.cache.set(cache_key, result)
 
     async def get_summary(
         self,
@@ -257,7 +370,13 @@ class JiraService:
         assignee: str | None = None,
         query: str | None = None,
     ) -> SummaryResponse:
-        issues = await self.get_issues(project_keys, sprint=sprint, assignee=assignee, query=query)
+        issues_response = await self.get_issues(
+            project_keys,
+            sprint=sprint,
+            assignee=assignee,
+            query=query,
+        )
+        issues = issues_response.issues
         status_counter = Counter(issue.status_name for issue in issues)
         category_by_status = {issue.status_name: issue.status_category for issue in issues}
         assignee_counter = Counter(issue.assignee.display_name for issue in issues)
@@ -270,7 +389,9 @@ class JiraService:
         ][:10]
 
         return SummaryResponse(
-            total=len(issues),
+            total=issues_response.total,
+            returned=issues_response.returned,
+            truncated=issues_response.truncated,
             statuses=[
                 StatusSummaryItem(
                     status_name=status_name,
@@ -295,7 +416,7 @@ class JiraService:
         priority = fields.get("priority") or {}
         issue_type = fields.get("issuetype") or {}
         project = fields.get("project") or {}
-        sprint_field = fields.get("customfield_10007") or []
+        sprint_field = fields.get(self.sprint_custom_field) or []
         story_points_raw = fields.get("customfield_10002")
         story_points: float | None
         try:
@@ -311,6 +432,7 @@ class JiraService:
             status_category=category.get("key", "indeterminate"),
             priority=priority.get("name"),
             assignee=JiraAssignee(
+                name=assignee.get("name"),
                 display_name=assignee.get("displayName", "Chưa gán"),
                 avatar_url=(assignee.get("avatarUrls") or {}).get("48x48"),
             ),
@@ -319,7 +441,9 @@ class JiraService:
             issue_type=issue_type.get("name"),
             project_key=project.get("key", ""),
             project_name=project.get("name", ""),
-            sprint_names=[sprint.get("name", "") for sprint in sprint_field if isinstance(sprint, dict)],
+            sprint_names=[
+                sprint.get("name", "") for sprint in sprint_field if isinstance(sprint, dict)
+            ],
             url=f"{self.base_url}/browse/{item['key']}",
             story_points=story_points,
         )
@@ -350,7 +474,15 @@ class JiraService:
             clauses.append(f'updated <= "{updated_to} 23:59"')
 
         if query:
-            escaped = query.replace('"', '\\"')
-            clauses.append(f'(summary ~ "{escaped}" OR key = "{escaped}")')
+            # Jira rejects `key = "BE"` (not a valid issue key) with HTTP 400.
+            if query.startswith("__keys__:"):
+                clauses.append(f"({query.removeprefix('__keys__:')})")
+                return " AND ".join(clauses) + " ORDER BY updated DESC"
+            escaped = query.replace("\\", "\\\\").replace('"', '\\"')
+            if ISSUE_KEY_RE.fullmatch(query.strip()):
+                key = query.strip().upper().replace("\\", "\\\\").replace('"', '\\"')
+                clauses.append(f'(key = "{key}" OR summary ~ "{escaped}")')
+            else:
+                clauses.append(f'summary ~ "{escaped}"')
 
         return " AND ".join(clauses) + " ORDER BY status ASC, priority DESC, updated DESC"

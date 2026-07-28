@@ -1,5 +1,7 @@
 import type {
-  JiraIssue,
+  AppConfig,
+  IssuesResponse,
+  JiraHealth,
   JiraProject,
   JiraSprint,
   JiraStatus,
@@ -26,12 +28,14 @@ export function getProjects() {
   return request<JiraProject[]>('/api/projects')
 }
 
-export function getStatuses(project: string) {
-  return request<JiraStatus[]>(`/api/statuses?project=${encodeURIComponent(project)}`)
+export function getStatuses(projects: string[]) {
+  const search = new URLSearchParams({ projects: projects.join(',') })
+  return request<JiraStatus[]>(`/api/statuses?${search.toString()}`)
 }
 
-export function getSprints(project: string) {
-  return request<JiraSprint[]>(`/api/sprints?project=${encodeURIComponent(project)}`)
+export function getSprints(projects: string[]) {
+  const search = new URLSearchParams({ projects: projects.join(',') })
+  return request<JiraSprint[]>(`/api/sprints?${search.toString()}`)
 }
 
 export function getUsers(params: { projects: string[]; q?: string }) {
@@ -52,11 +56,10 @@ export function getIssues(params: {
     projects: params.projects.join(','),
   })
   if (params.sprint) search.set('sprint', params.sprint)
-
   if (params.assignee) search.set('assignee', params.assignee)
   if (params.q) search.set('q', params.q)
 
-  return request<JiraIssue[]>(`/api/issues?${search.toString()}`)
+  return request<IssuesResponse>(`/api/issues?${search.toString()}`)
 }
 
 export function getSummary(params: {
@@ -69,26 +72,57 @@ export function getSummary(params: {
     projects: params.projects.join(','),
   })
   if (params.sprint) search.set('sprint', params.sprint)
-
   if (params.assignee) search.set('assignee', params.assignee)
   if (params.q) search.set('q', params.q)
 
   return request<SummaryResponse>(`/api/summary?${search.toString()}`)
 }
 
-export function calculateKpi(body: KpiRequest) {
-  return request<KpiCalculateResponse>('/api/kpi/calculate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
+export function getAppConfig() {
+  return request<AppConfig>('/api/config')
 }
 
-export async function exportKpi(body: KpiRequest): Promise<Blob> {
+export function getJiraHealth() {
+  return request<JiraHealth>('/api/health/jira')
+}
+
+export function calculateKpi(body: KpiRequest) {
+  return calculateKpiWithWorkbook(body)
+}
+
+function buildKpiFormData(body: KpiRequest, workbook?: File) {
+  const form = new FormData()
+  form.set('role', body.role)
+  form.set('period_type', body.period.type)
+  form.set('assignee', body.assignee)
+  form.set('projects', JSON.stringify(body.projects))
+  if (body.period.sprint) form.set('sprint', body.period.sprint)
+  if (body.period.month) form.set('month', body.period.month)
+  if (workbook) form.set('workbook', workbook)
+  return form
+}
+
+export async function calculateKpiWithWorkbook(
+  body: KpiRequest,
+  workbook?: File,
+): Promise<KpiCalculateResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/kpi/calculate`, {
+    method: 'POST',
+    body: buildKpiFormData(body, workbook),
+  })
+
+  if (!response.ok) {
+    const message = await response.text()
+    throw new Error(message || `Request failed: ${response.status}`)
+  }
+
+  return response.json() as Promise<KpiCalculateResponse>
+}
+
+export async function exportKpi(body: KpiRequest, workbook?: File): Promise<Blob> {
   const response = await fetch(`${API_BASE_URL}/api/kpi/export`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: buildKpiFormData(body, workbook),
   })
 
   if (!response.ok) {
@@ -97,4 +131,19 @@ export async function exportKpi(body: KpiRequest): Promise<Blob> {
   }
 
   return response.blob()
+}
+
+export async function downloadKpiTemplate(): Promise<Blob> {
+  const response = await fetch(`${API_BASE_URL}/api/kpi/template`)
+
+  if (!response.ok) {
+    const message = await response.text()
+    throw new Error(message || `Request failed: ${response.status}`)
+  }
+
+  return response.blob()
+}
+
+export function userFilterValue(user: JiraUser) {
+  return user.name || user.key || user.display_name
 }

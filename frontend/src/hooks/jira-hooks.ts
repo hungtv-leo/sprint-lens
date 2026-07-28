@@ -1,6 +1,15 @@
 import { useQuery } from '@tanstack/react-query'
 
-import { getIssues, getProjects, getSprints, getStatuses, getSummary, getUsers } from '../lib/api'
+import {
+  getAppConfig,
+  getIssues,
+  getJiraHealth,
+  getProjects,
+  getSprints,
+  getStatuses,
+  getSummary,
+  getUsers,
+} from '../lib/api'
 
 export function useProjects() {
   return useQuery({
@@ -11,20 +20,20 @@ export function useProjects() {
   })
 }
 
-export function useStatuses(project?: string) {
+export function useStatuses(projects: string[]) {
   return useQuery({
-    queryKey: ['statuses', project],
-    queryFn: () => getStatuses(project!),
-    enabled: Boolean(project),
+    queryKey: ['statuses', projects],
+    queryFn: () => getStatuses(projects),
+    enabled: projects.length > 0,
     staleTime: 60_000,
   })
 }
 
-export function useSprints(project?: string) {
+export function useSprints(projects: string[]) {
   return useQuery({
-    queryKey: ['sprints', project],
-    queryFn: () => getSprints(project!),
-    enabled: Boolean(project),
+    queryKey: ['sprints', projects],
+    queryFn: () => getSprints(projects),
+    enabled: projects.length > 0,
     staleTime: 60_000,
   })
 }
@@ -63,5 +72,22 @@ export function useSummary(params: {
     queryFn: () => getSummary(params),
     enabled: params.projects.length > 0,
     refetchInterval: 30_000,
+  })
+}
+
+export function useAppConfig() {
+  return useQuery({
+    queryKey: ['app-config'],
+    queryFn: getAppConfig,
+    staleTime: 300_000,
+  })
+}
+
+export function useJiraHealth() {
+  return useQuery({
+    queryKey: ['jira-health'],
+    queryFn: getJiraHealth,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
   })
 }

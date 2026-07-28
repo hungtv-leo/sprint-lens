@@ -87,65 +87,153 @@ def compute_developer_kpi(payload: KpiAgentPayload) -> KpiAgentResult:
     """Apply kpi-developer skill rules to the issue dataset."""
     evidence: list[KpiEvidenceItem] = []
     notes: list[str] = []
+    trace: list[str] = []
+    issues_by_key = {issue.key.upper(): issue for issue in payload.issues}
 
     committed_issues = []
-    for issue in payload.issues:
-        if _is_cancelled(issue.status_name):
-            evidence.append(
-                KpiEvidenceItem(key=issue.key, bucket="excluded", note="Cancelled / withdrawn")
-            )
-            continue
-        committed_issues.append(issue)
+    completed_issues = []
+    incomplete_issues = []
 
-    completed_issues = [i for i in committed_issues if i.status_category == "done"]
-    incomplete_issues = [i for i in committed_issues if i.status_category != "done"]
+    planned_items = payload.plan_items or []
+    if not planned_items:
+        for issue in payload.issues:
+            if _is_cancelled(issue.status_name):
+                evidence.append(
+                    KpiEvidenceItem(key=issue.key, bucket="excluded", note="Đã hủy / rút lại")
+                )
+                continue
+            committed_issues.append(issue)
+    else:
+        plan_type_labels = {
+            "committed": "Cam kết",
+            "stretch": "Phát sinh",
+            "out_of_scope": "Ngoài phạm vi",
+        }
+        for item in planned_items:
+            issue = issues_by_key.get(item.issue_key.upper())
+            if issue is None:
+                evidence.append(
+                    KpiEvidenceItem(
+                        key=item.issue_key,
+                        bucket="missing_jira",
+                        note=f"Không tìm thấy issue cho dòng kế hoạch {item.row_number}",
+                    )
+                )
+                continue
+            if item.plan_type != "committed":
+                evidence.append(
+                    KpiEvidenceItem(
+                        key=issue.key,
+                        bucket="excluded",
+                        note=f"Bỏ qua loại kế hoạch={plan_type_labels.get(item.plan_type, item.plan_type)}",
+                    )
+                )
+                continue
+            if item.exclusion_reason and item.exclusion_reason.strip():
+                evidence.append(
+                    KpiEvidenceItem(
+                        key=issue.key,
+                        bucket="excluded",
+                        note=item.exclusion_reason.strip(),
+                    )
+                )
+                continue
+            if _is_cancelled(issue.status_name):
+                evidence.append(
+                    KpiEvidenceItem(key=issue.key, bucket="excluded", note="Đã hủy / rút lại")
+                )
+                continue
+            committed_issues.append(issue)
 
-    for issue in completed_issues:
-        evidence.append(KpiEvidenceItem(key=issue.key, bucket="completed", note=issue.status_name))
-    for issue in incomplete_issues:
-        evidence.append(KpiEvidenceItem(key=issue.key, bucket="incomplete", note=issue.status_name))
+    for issue in committed_issues:
+        if issue.status_category == "done":
+            completed_issues.append(issue)
+            evidence.append(KpiEvidenceItem(key=issue.key, bucket="completed", note=issue.status_name))
+        else:
+            incomplete_issues.append(issue)
+            evidence.append(KpiEvidenceItem(key=issue.key, bucket="incomplete", note=issue.status_name))
 
     committed = len(committed_issues)
     completed = len(completed_issues)
     incomplete = len(incomplete_issues)
     commitment_rate = (completed / committed) if committed else 0.0
+    trace.append(f"Cam kết: {completed}/{committed} issue hoàn thành.")
 
+    plan_by_key = {item.issue_key.upper(): item for item in planned_items}
     on_time_completed = 0
     on_time_eligible = 0
+    schedule_sources: set[str] = set()
     for issue in completed_issues:
-        due = _parse_date(issue.due_date)
+        planned = plan_by_key.get(issue.key.upper())
+        if issue.due_date:
+            schedule_sources.add("jira_due_date")
+            due = _parse_date(issue.due_date)
+        else:
+            due = _parse_date(planned.expected_due_date if planned else None)
+            if due is not None:
+                schedule_sources.add("plan_due_date")
         if due is None:
-            notes.append(f"{issue.key}: thiếu due_date — loại khỏi Schedule Performance.")
+            notes.append(f"{issue.key}: thiếu hạn dự kiến — loại khỏi Đúng hạn.")
             continue
         on_time_eligible += 1
         done_on = _parse_date(issue.updated) or due
         if done_on <= due:
             on_time_completed += 1
-            evidence.append(KpiEvidenceItem(key=issue.key, bucket="on_time", note=f"due {due}"))
+            evidence.append(KpiEvidenceItem(key=issue.key, bucket="on_time", note=f"hạn {due}"))
         else:
             evidence.append(
-                KpiEvidenceItem(key=issue.key, bucket="late", note=f"due {due}, done {done_on}")
+                KpiEvidenceItem(
+                    key=issue.key,
+                    bucket="late",
+                    note=f"hạn {due}, hoàn thành {done_on}",
+                )
             )
 
     schedule_rate = (on_time_completed / on_time_eligible) if on_time_eligible else None
-
-    points_committed = 0.0
-    points_completed = 0.0
-    has_points = False
-    for issue in committed_issues:
-        if issue.story_points is None:
-            continue
-        has_points = True
-        points_committed += float(issue.story_points)
-        if issue.status_category == "done":
-            points_completed += float(issue.story_points)
-
-    throughput_rate: float | None
-    if has_points and points_committed > 0:
-        throughput_rate = points_completed / points_committed
+    if not schedule_sources:
+        schedule_source = "none"
+    elif len(schedule_sources) == 1:
+        schedule_source = next(iter(schedule_sources))
     else:
-        throughput_rate = None
-        notes.append("Không có story points — Work Throughput (J7) = x.")
+        schedule_source = "mixed"
+    if on_time_eligible:
+        trace.append(
+            f"Đúng hạn: {on_time_completed}/{on_time_eligible} issue đủ điều kiện, nguồn={schedule_source}."
+        )
+        trace.append("Đúng hạn hiện dùng thời điểm `updated` trên Jira như tín hiệu hoàn thành gần đúng.")
+
+    points_ready = bool(committed_issues) and all(issue.story_points is not None for issue in committed_issues)
+    scope_ready = bool(committed_issues) and all(
+        (plan_by_key.get(issue.key.upper()) and plan_by_key[issue.key.upper()].scope_score is not None)
+        for issue in committed_issues
+    )
+
+    throughput_source: str = "none"
+    throughput_rate: float | None = None
+    throughput_completed_scope: float | None = None
+    throughput_committed_scope: float | None = None
+    if points_ready:
+        throughput_source = "story_points"
+        throughput_committed_scope = sum(float(issue.story_points or 0) for issue in committed_issues)
+        throughput_completed_scope = sum(float(issue.story_points or 0) for issue in completed_issues)
+    elif scope_ready:
+        throughput_source = "scope_score"
+        throughput_committed_scope = sum(
+            float(plan_by_key[issue.key.upper()].scope_score or 0) for issue in committed_issues
+        )
+        throughput_completed_scope = sum(
+            float(plan_by_key[issue.key.upper()].scope_score or 0) for issue in completed_issues
+        )
+    else:
+        notes.append("Thiếu story points và scope score đầy đủ — Work Throughput (J7) = x.")
+
+    if throughput_committed_scope and throughput_committed_scope > 0:
+        throughput_rate = throughput_completed_scope / throughput_committed_scope
+    if throughput_source != "none" and throughput_committed_scope is not None:
+        trace.append(
+            "Thông lượng: "
+            f"{throughput_completed_scope}/{throughput_committed_scope}, nguồn={throughput_source}."
+        )
 
     j5 = round(commitment_rate, 4)
     k5 = rate_to_score(commitment_rate)
@@ -155,10 +243,24 @@ def compute_developer_kpi(payload: KpiAgentPayload) -> KpiAgentResult:
     k7 = rate_to_score(throughput_rate)
 
     cell_updates = [
+        KpiCellUpdate(sheet=SHEET_DEVELOPER, cell="H5", value=completed),
+        KpiCellUpdate(sheet=SHEET_DEVELOPER, cell="I5", value=committed),
         KpiCellUpdate(sheet=SHEET_DEVELOPER, cell="J5", value=j5),
         KpiCellUpdate(sheet=SHEET_DEVELOPER, cell="K5", value=k5),
+        KpiCellUpdate(sheet=SHEET_DEVELOPER, cell="H6", value=on_time_completed),
+        KpiCellUpdate(sheet=SHEET_DEVELOPER, cell="I6", value=on_time_eligible),
         KpiCellUpdate(sheet=SHEET_DEVELOPER, cell="J6", value=j6),
         KpiCellUpdate(sheet=SHEET_DEVELOPER, cell="K6", value=k6),
+        KpiCellUpdate(
+            sheet=SHEET_DEVELOPER,
+            cell="H7",
+            value=round(throughput_completed_scope, 4) if throughput_completed_scope is not None else "x",
+        ),
+        KpiCellUpdate(
+            sheet=SHEET_DEVELOPER,
+            cell="I7",
+            value=round(throughput_committed_scope, 4) if throughput_committed_scope is not None else "x",
+        ),
         KpiCellUpdate(sheet=SHEET_DEVELOPER, cell="J7", value=j7),
         KpiCellUpdate(sheet=SHEET_DEVELOPER, cell="K7", value=k7),
     ]
@@ -172,11 +274,20 @@ def compute_developer_kpi(payload: KpiAgentPayload) -> KpiAgentResult:
             on_time_eligible=on_time_eligible,
             commitment_rate=round(commitment_rate, 4),
             schedule_rate=round(schedule_rate, 4) if schedule_rate is not None else None,
+            schedule_source=schedule_source,
             throughput_rate=round(throughput_rate, 4) if throughput_rate is not None else None,
+            throughput_source=throughput_source,
+            throughput_completed_scope=round(throughput_completed_scope, 4)
+            if throughput_completed_scope is not None
+            else None,
+            throughput_committed_scope=round(throughput_committed_scope, 4)
+            if throughput_committed_scope is not None
+            else None,
         ),
         cell_updates=cell_updates,
         evidence=evidence,
         notes=notes,
+        trace=trace,
     )
 
 

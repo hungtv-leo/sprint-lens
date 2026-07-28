@@ -86,14 +86,16 @@ docker compose up --build
 ## API endpoints
 
 - `GET /health`
+- `GET /api/config` — default projects + sprint custom field
+- `GET /api/health/jira` — ping Jira
 - `GET /api/projects`
-- `GET /api/statuses?project=PROJECT_KEY`
-- `GET /api/sprints?project=PROJECT_KEY`
-- `GET /api/issues?projects=AAA,BBB&sprint=active`
+- `GET /api/statuses?projects=AAA,BBB` (legacy: `project=`)
+- `GET /api/sprints?projects=AAA,BBB` (legacy: `project=`)
+- `GET /api/issues?projects=AAA,BBB&sprint=active` — `{ issues, total, returned, truncated }`
 - `GET /api/summary?projects=AAA,BBB&sprint=active`
-- `GET /api/users?projects=AAA,BBB&q=optional` — danh sách nhân viên assignable theo project
-- `POST /api/kpi/calculate` — Agent đọc skill theo role, trả stats KPI
-- `POST /api/kpi/export` — Agent tính toán rồi điền file KPI mẫu (xlsx)
+- `GET /api/users?projects=AAA,BBB&q=optional`
+- `POST /api/kpi/calculate`
+- `POST /api/kpi/export`
 
 Skill Developer nằm tại `.cursor/skills/kpi-developer/`. Module UI: `/kpi`.
 
@@ -115,5 +117,9 @@ Workflow [`.github/workflows/ci.yml`](.github/workflows/ci.yml) chạy lint + bu
 - Sprint Lens đọc dữ liệu Jira theo token, không đẩy token xuống trình duyệt.
 - Backend hiện tại hỗ trợ `Personal Access Token` để kết nối Jira.
 - Bảng hiện tại là chỉ đọc, an toàn cho giai đoạn đầu.
-- Nếu Jira của công ty dùng custom sprint field khác `customfield_10007`, cần cập nhật trong `backend/app/services/jira_service.py`.
+- Nếu Jira của công ty dùng custom sprint field khác `customfield_10007`, đặt `JIRA_SPRINT_CUSTOM_FIELD` trong `backend/.env`.
+- `GET /api/config` trả `default_projects` (từ `JIRA_DEFAULT_PROJECTS`) và sprint field — không lộ token.
+- `GET /api/health/jira` kiểm tra kết nối Jira (`/rest/api/2/myself`).
+- Issues API phân trang nội bộ (tối đa 1000), trả `total` / `returned` / `truncated`.
+- Filter assignee dùng Jira username (`name`), không dùng display name.
 - Site GitHub Pages cũ (nếu còn) không lấy được data Jira vì backend không còn trên internet; dùng `localhost` ở trên.

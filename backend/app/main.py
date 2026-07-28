@@ -6,6 +6,7 @@ from app.api.kpi import router as kpi_router
 from app.api.projects import router as projects_router
 from app.api.sprints import router as sprints_router
 from app.api.statuses import router as statuses_router
+from app.api.system import router as system_router
 from app.api.users import router as users_router
 
 app = FastAPI(title="Sprint Lens API", version="0.1.0")
@@ -29,4 +30,5 @@ app.include_router(issues_router)
 app.include_router(statuses_router)
 app.include_router(sprints_router)
 app.include_router(users_router)
+app.include_router(system_router)
 app.include_router(kpi_router)

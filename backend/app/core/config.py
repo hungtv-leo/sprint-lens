@@ -10,6 +10,10 @@ class Settings(BaseSettings):
     jira_email: str = Field(default="", alias="JIRA_EMAIL")
     jira_api_token: str = Field(default="", alias="JIRA_API_TOKEN")
     jira_default_projects: str = Field(default="", alias="JIRA_DEFAULT_PROJECTS")
+    jira_sprint_custom_field: str = Field(
+        default="customfield_10007",
+        alias="JIRA_SPRINT_CUSTOM_FIELD",
+    )
     cache_ttl_seconds: int = Field(default=30, alias="CACHE_TTL_SECONDS")
     cursor_api_key: str = Field(default="", alias="CURSOR_API_KEY")
     kpi_prefer_cursor_agent: bool = Field(default=True, alias="KPI_PREFER_CURSOR_AGENT")

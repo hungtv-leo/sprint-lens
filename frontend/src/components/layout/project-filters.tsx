@@ -1,7 +1,8 @@
 import { FilterOutlined, RedoOutlined } from '@ant-design/icons'
-import { Button, Card, Col, Grid, Row, Select, Space, Typography } from 'antd'
+import { Button, Card, Col, Grid, Input, Row, Select, Space, Typography } from 'antd'
 
 import { useUsers } from '../../hooks/jira-hooks'
+import { userFilterValue } from '../../lib/api'
 import type { JiraProject, JiraSprint } from '../../lib/types'
 
 const { useBreakpoint } = Grid
@@ -15,6 +16,8 @@ type FiltersProps = {
   sprints?: JiraSprint[]
   assignee: string
   onAssigneeChange: (value: string) => void
+  query?: string
+  onQueryChange?: (value: string) => void
 }
 
 const sprintStateLabel: Record<string, string> = {
@@ -32,12 +35,17 @@ export function ProjectFilters({
   sprints = [],
   assignee,
   onAssigneeChange,
+  query = '',
+  onQueryChange,
 }: FiltersProps) {
   const screens = useBreakpoint()
   const isMobile = !screens.md
   const usersQuery = useUsers(selectedProjects)
   const hasFilters =
-    selectedProjects.length > 0 || Boolean(sprint) || Boolean(assignee)
+    selectedProjects.length > 0 ||
+    Boolean(sprint) ||
+    Boolean(assignee) ||
+    Boolean(query.trim())
 
   return (
     <Card
@@ -63,6 +71,7 @@ export function ProjectFilters({
                 onProjectsChange([])
                 onSprintChange('')
                 onAssigneeChange('')
+                onQueryChange?.('')
               }}
             >
               {isMobile ? 'Xóa' : 'Xóa bộ lọc'}
@@ -78,7 +87,7 @@ export function ProjectFilters({
       ) : null}
 
       <Row gutter={[12, 12]}>
-        <Col xs={24} md={10}>
+        <Col xs={24} md={onQueryChange ? 8 : 10}>
           <Typography.Text type="secondary">Project</Typography.Text>
           <Select
             mode="multiple"
@@ -100,7 +109,7 @@ export function ProjectFilters({
           />
         </Col>
 
-        <Col xs={24} sm={12} md={7}>
+        <Col xs={24} sm={12} md={onQueryChange ? 5 : 7}>
           <Typography.Text type="secondary">Sprint</Typography.Text>
           <Select
             allowClear
@@ -120,7 +129,7 @@ export function ProjectFilters({
           />
         </Col>
 
-        <Col xs={24} sm={12} md={7}>
+        <Col xs={24} sm={12} md={onQueryChange ? 5 : 7}>
           <Typography.Text type="secondary">Người được giao</Typography.Text>
           <Select
             showSearch
@@ -134,7 +143,7 @@ export function ProjectFilters({
             disabled={selectedProjects.length === 0}
             loading={usersQuery.isFetching}
             options={(usersQuery.data ?? []).map((user) => ({
-              value: user.display_name,
+              value: userFilterValue(user),
               label: user.email
                 ? `${user.display_name} (${user.email})`
                 : user.display_name,
@@ -148,6 +157,19 @@ export function ProjectFilters({
             getPopupContainer={(node) => node.parentElement ?? document.body}
           />
         </Col>
+
+        {onQueryChange ? (
+          <Col xs={24} md={6}>
+            <Typography.Text type="secondary">Tìm kiếm</Typography.Text>
+            <Input
+              allowClear
+              style={{ marginTop: 8 }}
+              placeholder="Key hoặc summary"
+              value={query}
+              onChange={(event) => onQueryChange(event.target.value)}
+            />
+          </Col>
+        ) : null}
       </Row>
     </Card>
   )

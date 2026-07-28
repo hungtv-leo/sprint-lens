@@ -26,6 +26,7 @@ class JiraSprint(BaseModel):
 
 
 class JiraAssignee(BaseModel):
+    name: str | None = None
     display_name: str = "Chưa gán"
     avatar_url: str | None = None
 
@@ -60,6 +61,9 @@ class JiraIssue(BaseModel):
 
 class IssuesResponse(BaseModel):
     issues: list[JiraIssue]
+    total: int
+    returned: int
+    truncated: bool = False
 
 
 class StatusSummaryItem(BaseModel):
@@ -75,7 +79,21 @@ class AssigneeSummaryItem(BaseModel):
 
 class SummaryResponse(BaseModel):
     total: int
+    returned: int
+    truncated: bool = False
     statuses: list[StatusSummaryItem]
     assignees: list[AssigneeSummaryItem]
     unstarted: list[JiraIssue]
     testing: list[JiraIssue]
+
+
+class AppConfigResponse(BaseModel):
+    default_projects: list[str]
+    sprint_custom_field: str
+
+
+class JiraHealthResponse(BaseModel):
+    status: str
+    ok: bool
+    detail: str | None = None
+    display_name: str | None = None

@@ -4,7 +4,6 @@ import { AppShell } from './components/layout/app-shell'
 import { BoardPage } from './pages/board-page'
 import { DashboardPage } from './pages/dashboard-page'
 import { KpiPage } from './pages/kpi-page'
-import { SettingsPage } from './pages/settings-page'
 
 function App() {
   return (
@@ -14,7 +13,7 @@ function App() {
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/board" element={<BoardPage />} />
         <Route path="/kpi" element={<KpiPage />} />
-        <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/settings" element={<Navigate to="/dashboard" replace />} />
       </Routes>
     </AppShell>
   )

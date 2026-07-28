@@ -18,7 +18,12 @@ def get_jira_service() -> JiraService:
     settings = get_settings()
     client = JiraClient(settings)
     cache = get_cache()
-    return JiraService(client=client, cache=cache, base_url=settings.jira_base_url)
+    return JiraService(
+        client=client,
+        cache=cache,
+        base_url=settings.jira_base_url,
+        sprint_custom_field=settings.jira_sprint_custom_field,
+    )
 
 
 def get_kpi_service() -> KpiService:

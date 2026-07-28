@@ -28,6 +28,7 @@ export type JiraIssue = {
   status_category: string
   priority?: string | null
   assignee: {
+    name?: string | null
     display_name: string
     avatar_url?: string | null
   }
@@ -41,8 +42,17 @@ export type JiraIssue = {
   story_points?: number | null
 }
 
+export type IssuesResponse = {
+  issues: JiraIssue[]
+  total: number
+  returned: number
+  truncated: boolean
+}
+
 export type SummaryResponse = {
   total: number
+  returned: number
+  truncated: boolean
   statuses: Array<{
     status_name: string
     total: number
@@ -66,6 +76,18 @@ export type JiraUser = {
   active?: boolean
 }
 
+export type AppConfig = {
+  default_projects: string[]
+  sprint_custom_field: string
+}
+
+export type JiraHealth = {
+  status: string
+  ok: boolean
+  detail?: string | null
+  display_name?: string | null
+}
+
 export type KpiPeriodType = 'sprint' | 'month'
 
 export type KpiRequest = {
@@ -87,7 +109,34 @@ export type KpiStats = {
   on_time_eligible: number
   commitment_rate: number
   schedule_rate: number | null
+  schedule_source?: 'jira_due_date' | 'plan_due_date' | 'mixed' | 'none'
   throughput_rate: number | null
+  throughput_source?: 'story_points' | 'scope_score' | 'none'
+  throughput_completed_scope?: number | null
+  throughput_committed_scope?: number | null
+}
+
+export type KpiPlanSummary = {
+  sheet_name: string
+  total_rows: number
+  committed_rows: number
+  excluded_rows: number
+  duplicate_keys: number
+  missing_key_rows: number
+  invalid_rows: number
+  matched_issue_count: number
+  missing_in_jira_count: number
+  assignee_mismatch_count: number
+  unplanned_issue_count: number
+}
+
+export type KpiPlanValidationIssue = {
+  row_number?: number | null
+  issue_key?: string | null
+  level: 'error' | 'warning'
+  blocking: boolean
+  code: string
+  message: string
 }
 
 export type KpiCalculateResponse = {
@@ -96,11 +145,15 @@ export type KpiCalculateResponse = {
   assignee: string
   projects: string[]
   issue_count: number
+  dataset_truncated: boolean
   agent: string
+  plan_summary?: KpiPlanSummary | null
+  validation_issues: KpiPlanValidationIssue[]
   result: {
     stats: KpiStats
     cell_updates: Array<{ sheet: string; cell: string; value: number | string }>
     evidence: Array<{ key: string; bucket: string; note: string }>
     notes: string[]
+    trace: string[]
   }
 }

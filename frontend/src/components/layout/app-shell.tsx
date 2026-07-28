@@ -27,8 +27,8 @@ const navigation: MenuProps['items'] = [
     label: 'Tổng quan',
     icon: <AppstoreOutlined />,
     children: [
-      { key: '/dashboard', label: 'Dashboard', icon: <BarChartOutlined /> },
-      { key: '/board', label: 'Kanban', icon: <ProjectOutlined /> },
+      { key: '/dashboard', label: 'Bảng tổng hợp', icon: <BarChartOutlined /> },
+      { key: '/board', label: 'Bảng Kanban', icon: <ProjectOutlined /> },
     ],
   },
   {
@@ -48,9 +48,6 @@ function SidebarBrand() {
       <Typography.Title level={4} style={{ marginTop: 8, marginBottom: 0 }}>
         Bảng điều khiển sprint Jira
       </Typography.Title>
-      <Typography.Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0, fontSize: 13 }}>
-        Quan sát sprint gọn gàng, ưu tiên đọc nhanh và ra quyết định.
-      </Typography.Paragraph>
     </div>
   )
 }
@@ -70,9 +67,6 @@ function ThemeToggle() {
         />
         <Typography.Text type="secondary">{mode === 'dark' ? 'Tối' : 'Sáng'}</Typography.Text>
       </Space>
-      <Typography.Paragraph type="secondary" style={{ marginTop: 12, marginBottom: 0, fontSize: 12 }}>
-        Dữ liệu được làm mới định kỳ mỗi 30 giây.
-      </Typography.Paragraph>
     </div>
   )
 }

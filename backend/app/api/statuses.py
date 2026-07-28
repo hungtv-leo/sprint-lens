@@ -8,7 +8,15 @@ router = APIRouter(prefix="/api/statuses", tags=["statuses"])
 
 @router.get("")
 async def list_statuses(
-    project: str = Query(..., description="Jira project key"),
+    projects: str | None = Query(default=None, description="Comma-separated project keys"),
+    project: str | None = Query(default=None, description="Single project key (legacy)"),
     service: JiraService = Depends(get_jira_service),
 ):
-    return await service.get_statuses(project)
+    project_keys = [item.strip() for item in (projects or "").split(",") if item.strip()]
+    if not project_keys and project:
+        project_keys = [project.strip()]
+    if not project_keys:
+        return []
+    if len(project_keys) == 1:
+        return await service.get_statuses(project_keys[0])
+    return await service.get_statuses_for_projects(project_keys)
