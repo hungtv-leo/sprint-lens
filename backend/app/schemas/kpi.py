@@ -60,6 +60,8 @@ class KpiIssuePayload(BaseModel):
     assignee_display_name: str = "Chưa gán"
     due_date: str | None = None
     updated: str | None = None
+    resolution_date: str | None = None
+    status_category_change_date: str | None = None
     story_points: float | None = None
 
 
@@ -72,8 +74,10 @@ class KpiStats(BaseModel):
     commitment_rate: float
     schedule_rate: float | None = None
     schedule_source: Literal["jira_due_date", "plan_due_date", "mixed", "none"] = "none"
+    schedule_coverage: float | None = None
     throughput_rate: float | None = None
-    throughput_source: Literal["story_points", "scope_score", "none"] = "none"
+    throughput_source: Literal["story_points", "scope_score", "hybrid", "none"] = "none"
+    throughput_coverage: float | None = None
     throughput_completed_scope: float | None = None
     throughput_committed_scope: float | None = None
 

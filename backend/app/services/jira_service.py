@@ -242,6 +242,8 @@ class JiraService:
 
             for item in data:
                 user = self._normalize_user(item)
+                if not user.active:
+                    continue
                 user_id = user.account_id or user.key or user.name or user.display_name
                 users_by_id[user_id] = user
 
@@ -325,6 +327,8 @@ class JiraService:
                     "priority",
                     "assignee",
                     "updated",
+                    "resolutiondate",
+                    "statuscategorychangedate",
                     "duedate",
                     "issuetype",
                     "project",
@@ -437,8 +441,11 @@ class JiraService:
                 avatar_url=(assignee.get("avatarUrls") or {}).get("48x48"),
             ),
             updated=fields.get("updated"),
+            resolution_date=fields.get("resolutiondate"),
+            status_category_change_date=fields.get("statuscategorychangedate"),
             due_date=fields.get("duedate"),
             issue_type=issue_type.get("name"),
+            is_subtask=bool(issue_type.get("subtask")),
             project_key=project.get("key", ""),
             project_name=project.get("name", ""),
             sprint_names=[

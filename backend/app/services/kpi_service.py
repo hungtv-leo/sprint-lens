@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from calendar import monthrange
-from datetime import date
+from datetime import date, datetime
 from io import BytesIO
 from pathlib import Path
 
@@ -24,7 +24,7 @@ from app.schemas.kpi import (
     KpiRequest,
 )
 from app.services.jira_service import JiraService
-from app.services.kpi_agent import KpiAgentRunner, SHEET_DEVELOPER
+from app.services.kpi_agent import KpiAgentRunner, SHEET_DEVELOPER, completion_date_of
 
 PLAN_SHEET_DEVELOPER = "Kế hoạch Developer"
 PLAN_SHEET_DEVELOPER_LEGACY = "Developer Plan"
@@ -96,6 +96,49 @@ class KpiService:
             return date.fromisoformat(value[:10])
         except ValueError:
             return None
+
+    def _is_subtask_issue(self, issue: JiraIssue) -> bool:
+        if issue.is_subtask:
+            return True
+        issue_type = (issue.issue_type or "").strip().lower()
+        return issue_type in {"sub-task", "subtask", "nhiệm vụ phụ", "sub task"}
+
+    def _parse_flexible_date(self, value: object) -> date | None:
+        """Parse plan due dates from Excel (datetime) or common text formats."""
+        if value is None or value == "":
+            return None
+        if isinstance(value, datetime):
+            return value.date()
+        if isinstance(value, date):
+            return value
+
+        text = str(value).strip()
+        if not text:
+            return None
+
+        # Excel sometimes stringifies datetime with time.
+        if " " in text:
+            text = text.split(" ", 1)[0]
+        if "T" in text:
+            text = text.split("T", 1)[0]
+
+        for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%d-%m-%Y", "%d/%m/%Y", "%d.%m.%Y"):
+            try:
+                return datetime.strptime(text, fmt).date()
+            except ValueError:
+                continue
+
+        for fmt in ("%d-%m-%y", "%d/%m/%y", "%d.%m.%y"):
+            try:
+                parsed = datetime.strptime(text, fmt).date()
+                # Keep KPI years in the 2000s for 2-digit years.
+                if parsed.year < 2000:
+                    parsed = parsed.replace(year=parsed.year + 100)
+                return parsed
+            except ValueError:
+                continue
+
+        return None
 
     async def _fetch_issues_response(self, request: KpiRequest) -> IssuesResponse:
         projects = [item.strip() for item in request.projects if item.strip()]
@@ -239,8 +282,13 @@ class KpiService:
         write_kv("Tỷ lệ cam kết", stats.commitment_rate)
         write_kv("Đúng hạn", stats.schedule_rate if stats.schedule_rate is not None else "x")
         write_kv("Nguồn đúng hạn", stats.schedule_source)
+        write_kv("Coverage đúng hạn", stats.schedule_coverage if stats.schedule_coverage is not None else "x")
         write_kv("Thông lượng", stats.throughput_rate if stats.throughput_rate is not None else "x")
         write_kv("Nguồn thông lượng", stats.throughput_source)
+        write_kv(
+            "Coverage thông lượng",
+            stats.throughput_coverage if stats.throughput_coverage is not None else "x",
+        )
         write_kv("Khối lượng hoàn thành", stats.throughput_completed_scope or 0)
         write_kv("Khối lượng cam kết", stats.throughput_committed_scope or 0)
         row += 1
@@ -344,11 +392,12 @@ class KpiService:
             task_title = str(worksheet.cell(row, header_map["task_title"]).value or "").strip()
             raw_plan_type_value = worksheet.cell(row, header_map["plan_type"]).value
             plan_type_raw = self._normalize_plan_type(raw_plan_type_value)
-            due_text = (
-                str(worksheet.cell(row, header_map["expected_due_date"]).value or "").strip()
+            due_raw = (
+                worksheet.cell(row, header_map["expected_due_date"]).value
                 if "expected_due_date" in header_map
-                else ""
+                else None
             )
+            due_text = "" if due_raw is None else str(due_raw).strip()
             scope_text = (
                 worksheet.cell(row, header_map["scope_score"]).value
                 if "scope_score" in header_map
@@ -420,22 +469,26 @@ class KpiService:
                 )
                 continue
 
-            expected_due_date = due_text or None
-            if expected_due_date:
-                try:
-                    date.fromisoformat(expected_due_date[:10])
-                except ValueError:
+            expected_due_date: str | None = None
+            if due_raw not in (None, ""):
+                parsed_due = self._parse_flexible_date(due_raw)
+                if parsed_due is None:
                     validation_issues.append(
                         KpiPlanValidationIssue(
                             row_number=row,
                             issue_key=normalized_key,
                             code="invalid_expected_due_date",
-                            message="Expected due date phải có dạng YYYY-MM-DD.",
+                            message=(
+                                "Hạn dự kiến không hợp lệ. "
+                                "Hỗ trợ: YYYY-MM-DD, DD-MM-YYYY, DD/MM/YYYY, DD-MM-YY."
+                            ),
                         )
                     )
                     continue
+                expected_due_date = parsed_due.isoformat()
                 if request and request.period.type == "month" and request.period.month:
-                    if not expected_due_date.startswith(request.period.month):
+                    month_start, month_end = self._month_bounds(request.period.month)
+                    if not (month_start <= parsed_due <= month_end):
                         validation_issues.append(
                             KpiPlanValidationIssue(
                                 row_number=row,
@@ -543,6 +596,8 @@ class KpiService:
                     assignee_display_name=issue.assignee.display_name,
                     due_date=issue.due_date,
                     updated=issue.updated,
+                    resolution_date=getattr(issue, "resolution_date", None),
+                    status_category_change_date=getattr(issue, "status_category_change_date", None),
                     story_points=getattr(issue, "story_points", None),
                 )
                 for issue in issues
@@ -616,8 +671,14 @@ class KpiService:
                 month_start, month_end = self._month_bounds(request.period.month)
                 filtered_issues: list[JiraIssue] = []
                 for issue in issues:
-                    updated_on = self._parse_issue_date(issue.updated)
-                    if updated_on and month_start <= updated_on <= month_end:
+                    if issue.status_category == "done":
+                        activity_on, activity_source = completion_date_of(issue)
+                        activity_label = "hoàn thành"
+                    else:
+                        activity_on = self._parse_issue_date(issue.updated)
+                        activity_source = "updated"
+                        activity_label = "cập nhật"
+                    if activity_on and month_start <= activity_on <= month_end:
                         filtered_issues.append(issue)
                         continue
                     validation_issues.append(
@@ -626,7 +687,10 @@ class KpiService:
                             level="warning",
                             blocking=False,
                             code="outside_requested_month",
-                            message="Issue không có cập nhật thuộc tháng đang tính, đã loại khỏi KPI tháng.",
+                            message=(
+                                f"Issue không có {activity_label} thuộc tháng đang tính "
+                                f"(nguồn={activity_source}), đã loại khỏi KPI tháng."
+                            ),
                         )
                     )
                 issues = filtered_issues
@@ -655,9 +719,9 @@ class KpiService:
             unplanned_issues = [
                 issue
                 for issue in period_issues
-                if issue.key.upper() not in planned_key_set
+                if issue.key.upper() not in planned_key_set and not self._is_subtask_issue(issue)
             ]
-            for issue in unplanned_issues[:20]:
+            for issue in unplanned_issues:
                 validation_issues.append(
                     KpiPlanValidationIssue(
                         issue_key=issue.key,

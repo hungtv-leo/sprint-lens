@@ -79,7 +79,7 @@ const WARNING_LABELS: Record<string, string> = {
   missing_in_jira: 'Thiếu trên Jira',
   assignee_mismatch: 'Không khớp người được giao',
   assignee_mismatch_summary: 'Tóm tắt người được giao',
-  unplanned_issue: 'Ngoài kế hoạch',
+  unplanned_issue: 'Ngoài kế hoạch (không gồm subtask)',
   jira_truncated: 'Dữ liệu Jira bị cắt ngưỡng',
   outside_requested_month: 'Ngoài tháng đang tính',
   expected_due_date_out_of_month: 'Hạn dự kiến lệch tháng',
@@ -99,6 +99,44 @@ function groupValidationIssues(items: KpiPlanValidationIssue[]) {
     grouped.set(item.code, list)
   }
   return Array.from(grouped.entries())
+}
+
+type GroupedEvidence = {
+  key: string
+  buckets: string[]
+  notes: string[]
+}
+
+function groupEvidenceByKey(
+  items: Array<{ key: string; bucket: string; note?: string }>,
+): GroupedEvidence[] {
+  const grouped = new Map<string, GroupedEvidence>()
+  for (const item of items) {
+    const existing = grouped.get(item.key)
+    if (!existing) {
+      grouped.set(item.key, {
+        key: item.key,
+        buckets: [item.bucket],
+        notes: item.note ? [item.note] : [],
+      })
+      continue
+    }
+    if (!existing.buckets.includes(item.bucket)) {
+      existing.buckets.push(item.bucket)
+    }
+    if (item.note && !existing.notes.includes(item.note)) {
+      existing.notes.push(item.note)
+    }
+  }
+  return Array.from(grouped.values())
+}
+
+function formatGroupedEvidenceNote(buckets: string[], notes: string[]) {
+  const bucketLabels = new Set(buckets.map((bucket) => formatEvidenceBucket(bucket)))
+  const usefulNotes = notes
+    .map((note) => formatEvidenceNote(note))
+    .filter((note) => note && note !== '—' && !bucketLabels.has(note))
+  return usefulNotes.length ? usefulNotes.join(' · ') : '—'
 }
 
 export function KpiPage() {
@@ -128,6 +166,11 @@ export function KpiPage() {
     (!requiresWorkbook || Boolean(planFile)) &&
     (!requiresSprint || Boolean(sprint))
 
+  function clearCalculation() {
+    setResult(null)
+    setError(null)
+  }
+
   const requestBody: KpiRequest | null = useMemo(() => {
     if (!canSubmit) return null
     return {
@@ -148,7 +191,7 @@ export function KpiPage() {
     try {
       const data = await calculateKpiWithWorkbook(requestBody, planFile ?? undefined)
       setResult(data)
-      message.success('Đã tính toán KPI Developer')
+      message.success('Đã tính toán KPI')
     } catch (err) {
       const text = err instanceof Error ? err.message : 'Không tính được KPI'
       setError(text)
@@ -159,7 +202,7 @@ export function KpiPage() {
   }
 
   async function handleExport() {
-    if (!requestBody) return
+    if (!requestBody || !canExport) return
     setExporting(true)
     setError(null)
     try {
@@ -174,7 +217,7 @@ export function KpiPage() {
       anchor.download = `KPI_developer_${requestBody.assignee}_${stamp}.xlsx`
       anchor.click()
       URL.revokeObjectURL(url)
-      message.success('Đã xuất file KPI')
+      message.success('Đã xuất file KPI đã tính')
     } catch (err) {
       const text = err instanceof Error ? err.message : 'Không xuất được file KPI'
       setError(text)
@@ -193,11 +236,11 @@ export function KpiPage() {
       anchor.download = 'kpi-plan-developer.xlsx'
       anchor.click()
       URL.revokeObjectURL(url)
-      message.success('Đã tải file kế hoạch mẫu')
+      message.success('Đã tải mẫu để điền kế hoạch')
     } catch (err) {
-      const text = err instanceof Error ? err.message : 'Không tải được file kế hoạch mẫu'
+      const text = err instanceof Error ? err.message : 'Không tải được mẫu kế hoạch'
       setError(text)
-      message.error('Tải file mẫu thất bại')
+      message.error('Tải mẫu kế hoạch thất bại')
     }
   }
 
@@ -206,24 +249,44 @@ export function KpiPage() {
   const warningGroups = groupValidationIssues(warnings)
   const blockingWarnings = warnings.filter((item) => item.blocking)
   const canExport = Boolean(requestBody) && Boolean(result) && blockingWarnings.length === 0
-  const checklist = [
-    {
-      done: selectedProjects.length > 0,
-      label: 'Chọn ít nhất 1 dự án',
-    },
-    {
-      done: Boolean(assignee.trim()),
-      label: 'Chọn nhân viên',
-    },
-    {
-      done: !requiresSprint || Boolean(sprint),
-      label: 'Chọn sprint cụ thể khi tính theo sprint',
-    },
-    {
-      done: !requiresWorkbook || Boolean(planFile),
-      label: 'Tải lên file kế hoạch khi tính theo tháng',
-    },
-  ]
+  const evidenceRows = groupEvidenceByKey(result?.result.evidence ?? [])
+  const checklist = requiresWorkbook
+    ? [
+        {
+          done: selectedProjects.length > 0,
+          label: 'Chọn ít nhất 1 dự án',
+        },
+        {
+          done: Boolean(assignee.trim()),
+          label: 'Chọn nhân viên',
+        },
+        {
+          done: Boolean(planFile),
+          label: 'Tải lên file kế hoạch đã điền',
+        },
+        {
+          done: Boolean(result),
+          label: 'Tính toán và kiểm tra cảnh báo',
+        },
+      ]
+    : [
+        {
+          done: selectedProjects.length > 0,
+          label: 'Chọn ít nhất 1 dự án',
+        },
+        {
+          done: Boolean(assignee.trim()),
+          label: 'Chọn nhân viên',
+        },
+        {
+          done: Boolean(sprint),
+          label: 'Chọn sprint cụ thể',
+        },
+        {
+          done: Boolean(result),
+          label: 'Tính toán trước khi xuất file KPI',
+        },
+      ]
 
   return (
     <div>
@@ -258,6 +321,7 @@ export function KpiPage() {
                     onChange={(projects) => {
                       setSelectedProjects(projects)
                       setAssignee('')
+                      clearCalculation()
                     }}
                     options={(projectsQuery.data ?? []).map((project) => ({
                       value: project.key,
@@ -279,10 +343,15 @@ export function KpiPage() {
                         : 'Chọn dự án trước'
                     }
                     value={assignee || undefined}
-                    onChange={(value) => setAssignee(value ?? '')}
+                    onChange={(value) => {
+                      setAssignee(value ?? '')
+                      clearCalculation()
+                    }}
                     disabled={selectedProjects.length === 0}
                     loading={usersQuery.isFetching}
-                    options={(usersQuery.data ?? []).map((user) => ({
+                    options={(usersQuery.data ?? [])
+                      .filter((user) => user.active !== false)
+                      .map((user) => ({
                       value: userFilterValue(user),
                       label: user.email
                         ? `${user.display_name} (${user.email})`
@@ -302,7 +371,10 @@ export function KpiPage() {
                   <div style={{ marginTop: 8 }}>
                     <Radio.Group
                       value={periodType}
-                      onChange={(event) => setPeriodType(event.target.value)}
+                      onChange={(event) => {
+                        setPeriodType(event.target.value)
+                        clearCalculation()
+                      }}
                       optionType="button"
                       buttonStyle="solid"
                       options={[
@@ -321,7 +393,10 @@ export function KpiPage() {
                       style={{ width: '100%', marginTop: 8 }}
                       placeholder="Chọn sprint"
                       value={sprint || undefined}
-                      onChange={(value) => setSprint(value ?? '')}
+                      onChange={(value) => {
+                        setSprint(value ?? '')
+                        clearCalculation()
+                      }}
                       options={[
                         { value: 'active', label: 'Sprint đang chạy' },
                         ...(sprintsQuery.data ?? []).map((item) => ({
@@ -340,18 +415,22 @@ export function KpiPage() {
                           picker="month"
                           style={{ width: '100%' }}
                           value={month}
-                          onChange={(value) => value && setMonth(value)}
+                          onChange={(value) => {
+                            if (!value) return
+                            setMonth(value)
+                            clearCalculation()
+                          }}
                           allowClear={false}
                         />
                       </div>
                     </div>
 
                     <div>
-                      <Typography.Text type="secondary">File KPI kế hoạch tháng</Typography.Text>
+                      <Typography.Text type="secondary">File kế hoạch tháng</Typography.Text>
                       <Space direction="vertical" size={10} style={{ width: '100%', marginTop: 8 }}>
                         <Space wrap size={8}>
                           <Button icon={<DownloadOutlined />} onClick={handleDownloadTemplate}>
-                            Tải file kế hoạch mẫu
+                            Tải mẫu để điền kế hoạch
                           </Button>
                           <Upload
                             accept=".xlsx"
@@ -359,13 +438,12 @@ export function KpiPage() {
                             showUploadList={false}
                             beforeUpload={(file) => {
                               setPlanFile(file)
-                              setResult(null)
-                              setError(null)
+                              clearCalculation()
                               return false
                             }}
                             onRemove={() => {
                               setPlanFile(null)
-                              setResult(null)
+                              clearCalculation()
                             }}
                             fileList={
                               planFile
@@ -380,7 +458,7 @@ export function KpiPage() {
                             }
                           >
                             <Button type="primary" ghost icon={<UploadOutlined />}>
-                              Chọn file KPI đã điền kế hoạch
+                              Chọn file kế hoạch đã điền
                             </Button>
                           </Upload>
                         </Space>
@@ -414,13 +492,13 @@ export function KpiPage() {
                               aria-label="Bỏ file đã chọn"
                               onClick={() => {
                                 setPlanFile(null)
-                                setResult(null)
+                                clearCalculation()
                               }}
                             />
                           </div>
                         ) : (
                           <Typography.Text type="secondary">
-                            Chưa có file nào được chọn.
+                            Chưa có file nào được chọn. Nút này chỉ tải mẫu trống để điền, không phải xuất KPI.
                           </Typography.Text>
                         )}
                       </Space>
@@ -430,7 +508,7 @@ export function KpiPage() {
                       type="info"
                       showIcon
                       message="Sheet bắt buộc: Kế hoạch Developer"
-                      description="Mỗi dòng là 1 mã Jira. Cột bắt buộc: Mã Jira, Tên công việc, Loại kế hoạch. Cột khuyến nghị: Hạn dự kiến, Điểm khối lượng, Ghi chú / lý do loại trừ."
+                      description="Mỗi dòng là 1 mã Jira. Cột bắt buộc: Mã Jira, Tên công việc, Loại kế hoạch. Cột khuyến nghị: Hạn dự kiến (YYYY-MM-DD hoặc DD/MM/YYYY), Điểm khối lượng, Ghi chú / lý do loại trừ."
                     />
                   </Space>
                 )}
@@ -438,21 +516,22 @@ export function KpiPage() {
                 <Alert
                   type="info"
                   showIcon
-                  message={requiresWorkbook ? '3 bước để tính KPI tháng' : 'Điều kiện để tính KPI'}
+                  message={requiresWorkbook ? 'Các bước tính KPI theo tháng' : 'Điều kiện để tính KPI theo sprint'}
                   description={
-                    <List
-                      size="small"
-                      dataSource={
-                        requiresWorkbook
-                          ? [
-                              '1. Tải file kế hoạch mẫu.',
-                              '2. Điền file và tải lại lên hệ thống.',
-                              '3. Xem cảnh báo trước khi xuất file KPI.',
-                            ]
-                          : checklist.map((item) => `${item.done ? 'Đã xong' : 'Còn thiếu'}: ${item.label}`)
-                      }
-                      renderItem={(item) => <List.Item>{item}</List.Item>}
-                    />
+                    <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                      {requiresWorkbook ? (
+                        <Typography.Text type="secondary">
+                          Tải mẫu để điền khác với Xuất file KPI đã tính. Chỉ xuất sau khi đã tính xong và không còn cảnh báo chặn.
+                        </Typography.Text>
+                      ) : null}
+                      <List
+                        size="small"
+                        dataSource={checklist.map(
+                          (item) => `${item.done ? 'Đã xong' : 'Còn thiếu'}: ${item.label}`,
+                        )}
+                        renderItem={(item) => <List.Item>{item}</List.Item>}
+                      />
+                    </Space>
                   }
                 />
 
@@ -462,22 +541,30 @@ export function KpiPage() {
                   </Typography.Text>
                 ) : null}
 
+                {canSubmit && !result ? (
+                  <Typography.Text type="secondary">
+                    Đã đủ điều kiện. Hãy nhấn Tính toán trước, rồi mới xuất file KPI đã tính.
+                  </Typography.Text>
+                ) : null}
+
                 {blockingWarnings.length ? (
                   <Alert
                     type="error"
                     showIcon
                     message="Cần xử lý trước khi xuất file KPI"
                     description={
-                      <List
-                        size="small"
-                        dataSource={blockingWarnings.slice(0, 5)}
-                        renderItem={(item) => (
-                          <List.Item>
-                            {item.issue_key ? `${item.issue_key}: ` : ''}
-                            {item.message}
-                          </List.Item>
-                        )}
-                      />
+                      <div style={{ maxHeight: 180, overflowY: 'auto', paddingRight: 4 }}>
+                        <List
+                          size="small"
+                          dataSource={blockingWarnings}
+                          renderItem={(item) => (
+                            <List.Item>
+                              {item.issue_key ? `${item.issue_key}: ` : ''}
+                              {item.message}
+                            </List.Item>
+                          )}
+                        />
+                      </div>
                     }
                   />
                 ) : null}
@@ -498,9 +585,14 @@ export function KpiPage() {
                     disabled={!canExport}
                     onClick={handleExport}
                   >
-                    Xuất file KPI
+                    Xuất file KPI đã tính
                   </Button>
                 </Space>
+                {result && !canExport ? (
+                  <Typography.Text type="secondary">
+                    Chưa xuất được vì còn cảnh báo chặn. Hãy xử lý cảnh báo rồi tính lại.
+                  </Typography.Text>
+                ) : null}
               </Space>
             </Card>
           </Col>
@@ -550,7 +642,7 @@ export function KpiPage() {
                       <Descriptions.Item label="Không khớp người được giao">
                         {result.plan_summary.assignee_mismatch_count}
                       </Descriptions.Item>
-                      <Descriptions.Item label="Ngoài kế hoạch">
+                      <Descriptions.Item label="Ngoài kế hoạch (không gồm subtask)">
                         {result.plan_summary.unplanned_issue_count}
                       </Descriptions.Item>
                       <Descriptions.Item label="Dữ liệu Jira bị cắt ngưỡng">
@@ -592,6 +684,12 @@ export function KpiPage() {
                     </Descriptions.Item>
                     <Descriptions.Item label="Đúng hạn (J6)">
                       {formatRate(stats.schedule_rate)}
+                      {stats.schedule_coverage != null ? (
+                        <Typography.Text type="secondary">
+                          {' '}
+                          · coverage {(stats.schedule_coverage * 100).toFixed(0)}%
+                        </Typography.Text>
+                      ) : null}
                     </Descriptions.Item>
                     <Descriptions.Item label="Nguồn đúng hạn">
                       {stats.schedule_source === 'jira_due_date'
@@ -604,13 +702,21 @@ export function KpiPage() {
                     </Descriptions.Item>
                     <Descriptions.Item label="Thông lượng (J7)">
                       {formatRate(stats.throughput_rate)}
+                      {stats.throughput_coverage != null ? (
+                        <Typography.Text type="secondary">
+                          {' '}
+                          · coverage {(stats.throughput_coverage * 100).toFixed(0)}%
+                        </Typography.Text>
+                      ) : null}
                     </Descriptions.Item>
                     <Descriptions.Item label="Nguồn thông lượng">
                       {stats.throughput_source === 'story_points'
                         ? 'Điểm story trên Jira'
                         : stats.throughput_source === 'scope_score'
                           ? 'Điểm khối lượng từ Kế hoạch Developer'
-                          : 'Chưa đủ dữ liệu'}
+                          : stats.throughput_source === 'hybrid'
+                            ? 'Kết hợp Story Points và Scope Score'
+                            : 'Chưa đủ dữ liệu'}
                     </Descriptions.Item>
                     <Descriptions.Item label="Công việc Jira đã lấy">
                       {result?.issue_count ?? 0}
@@ -622,7 +728,7 @@ export function KpiPage() {
                       type="info"
                       showIcon
                       message="Lưu ý về chỉ số Đúng hạn"
-                      description="Hiện hệ thống dùng thời điểm cập nhật gần nhất trên Jira làm tín hiệu hoàn thành gần đúng. Nếu công việc đã hoàn thành rồi mới bị chỉnh sửa thêm, chỉ số này có thể bị lệch."
+                      description="Ngày hoàn thành ưu tiên resolutiondate, rồi statuscategorychangedate; chỉ fallback sang updated khi thiếu hai trường trên. Issue thiếu due date / hạn kế hoạch bị loại khỏi mẫu số (xem coverage)."
                     />
                   ) : null}
 
@@ -637,10 +743,19 @@ export function KpiPage() {
                           dataSource={warningGroups}
                           renderItem={([code, items]) => (
                             <List.Item>
-                              <div>
-                                <Typography.Text strong>{formatWarningGroup(code)}</Typography.Text>
-                                <div style={{ marginTop: 4 }}>
-                                  {items.slice(0, 4).map((item, index) => (
+                              <div style={{ width: '100%' }}>
+                                <Typography.Text strong>
+                                  {formatWarningGroup(code)} ({items.length})
+                                </Typography.Text>
+                                <div
+                                  style={{
+                                    marginTop: 4,
+                                    maxHeight: 220,
+                                    overflowY: 'auto',
+                                    paddingRight: 4,
+                                  }}
+                                >
+                                  {items.map((item, index) => (
                                     <div key={`${code}-${item.issue_key ?? item.row_number ?? index}`}>
                                       {item.blocking ? '[Chặn export] ' : '[Nhắc nhở] '}
                                       {item.issue_key ? `${item.issue_key}: ` : ''}
@@ -648,11 +763,6 @@ export function KpiPage() {
                                       {item.message}
                                     </div>
                                   ))}
-                                  {items.length > 4 ? (
-                                    <Typography.Text type="secondary">
-                                      ... và thêm {items.length - 4} cảnh báo cùng loại
-                                    </Typography.Text>
-                                  ) : null}
                                 </div>
                               </div>
                             </List.Item>
@@ -692,18 +802,19 @@ export function KpiPage() {
                     />
                   ) : null}
 
-                  {result?.result.evidence?.length ? (
+                  {evidenceRows.length ? (
                     <Card size="small" title="Đối chiếu công việc (rút gọn)">
                       <List
                         size="small"
-                        dataSource={result.result.evidence.slice(0, 20)}
+                        dataSource={evidenceRows.slice(0, 20)}
                         renderItem={(item) => (
                           <List.Item style={{ paddingInline: 0 }}>
                             <div
                               style={{
                                 display: 'grid',
-                                gridTemplateColumns: '1fr 1fr 1fr',
+                                gridTemplateColumns: '1fr 1.4fr 1.2fr',
                                 alignItems: 'center',
+                                gap: 8,
                                 width: '100%',
                               }}
                             >
@@ -712,15 +823,15 @@ export function KpiPage() {
                               </Typography.Text>
                               <Typography.Text
                                 type="secondary"
-                                style={{ justifySelf: 'center', whiteSpace: 'nowrap' }}
+                                style={{ justifySelf: 'center', textAlign: 'center' }}
                               >
-                                {formatEvidenceBucket(item.bucket)}
+                                {item.buckets.map((bucket) => formatEvidenceBucket(bucket)).join(' · ')}
                               </Typography.Text>
                               <Typography.Text
                                 type="secondary"
                                 style={{ justifySelf: 'end', textAlign: 'right' }}
                               >
-                                {formatEvidenceNote(item.note)}
+                                {formatGroupedEvidenceNote(item.buckets, item.notes)}
                               </Typography.Text>
                             </div>
                           </List.Item>

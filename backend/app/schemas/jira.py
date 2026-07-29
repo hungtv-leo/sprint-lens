@@ -50,8 +50,11 @@ class JiraIssue(BaseModel):
     priority: str | None = None
     assignee: JiraAssignee
     updated: str | None = None
+    resolution_date: str | None = None
+    status_category_change_date: str | None = None
     due_date: str | None = None
     issue_type: str | None = None
+    is_subtask: bool = False
     project_key: str
     project_name: str
     sprint_names: list[str] = []

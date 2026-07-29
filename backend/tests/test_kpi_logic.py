@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import unittest
+from datetime import date, datetime
 from io import BytesIO
 
 from fastapi import HTTPException
@@ -18,7 +19,12 @@ from app.schemas.kpi import (
     KpiPeriod,
     KpiStats,
 )
-from app.services.kpi_agent import compute_developer_kpi
+from app.services.kpi_agent import (
+    commitment_rate_to_score,
+    compute_developer_kpi,
+    schedule_rate_to_score,
+    throughput_rate_to_score,
+)
 from app.services.kpi_service import KpiService
 
 
@@ -69,6 +75,8 @@ class KpiLogicTests(unittest.TestCase):
         assignee_name: str = "hung.tran",
         assignee_display_name: str = "Hưng",
         updated: str | None = "2026-07-09T10:00:00Z",
+        resolution_date: str | None = None,
+        status_category_change_date: str | None = None,
         due_date: str | None = None,
         story_points: float | None = None,
     ) -> JiraIssue:
@@ -81,6 +89,8 @@ class KpiLogicTests(unittest.TestCase):
             priority="Medium",
             assignee=JiraAssignee(name=assignee_name, display_name=assignee_display_name),
             updated=updated,
+            resolution_date=resolution_date,
+            status_category_change_date=status_category_change_date,
             due_date=due_date,
             issue_type="Task",
             project_key="TI",
@@ -115,6 +125,34 @@ class KpiLogicTests(unittest.TestCase):
         _, _, validation_issues = self.service._parse_plan_sheet(workbook, request=request)
         codes = {item.code for item in validation_issues}
         self.assertIn("expected_due_date_out_of_month", codes)
+
+    def test_parse_flexible_due_date_formats(self) -> None:
+        cases = [
+            ("2026-07-17", "2026-07-17"),
+            ("17/07/2026", "2026-07-17"),
+            ("17-07-2026", "2026-07-17"),
+            ("17/07/26", "2026-07-17"),
+            ("17-07-26", "2026-07-17"),
+            (date(2026, 7, 20), "2026-07-20"),
+            (datetime(2026, 7, 21, 8, 30), "2026-07-21"),
+        ]
+        for raw_value, expected in cases:
+            with self.subTest(raw_value=raw_value):
+                workbook = Workbook()
+                worksheet = workbook.active
+                worksheet.title = "Kế hoạch Developer"
+                worksheet["A2"] = "Mã Jira"
+                worksheet["B2"] = "Tên công việc"
+                worksheet["C2"] = "Loại kế hoạch"
+                worksheet["D2"] = "Hạn dự kiến"
+                worksheet["A3"] = "TI-801"
+                worksheet["B3"] = "Task A"
+                worksheet["C3"] = "Cam kết"
+                worksheet["D3"] = raw_value
+
+                plan_items, _, validation_issues = self.service._parse_plan_sheet(workbook)
+                self.assertEqual(validation_issues, [])
+                self.assertEqual(plan_items[0].expected_due_date, expected)
 
     def test_parse_plan_sheet_accepts_wps_like_plan_type_text(self) -> None:
         workbook = Workbook()
@@ -156,7 +194,8 @@ class KpiLogicTests(unittest.TestCase):
                     "assignee_name": "hung.tran",
                     "assignee_display_name": "Hưng",
                     "due_date": None,
-                    "updated": "2026-07-09T10:00:00Z",
+                    "resolution_date": "2026-07-09T10:00:00Z",
+                    "updated": "2026-07-20T10:00:00Z",
                     "story_points": None,
                 }
             ],
@@ -167,7 +206,139 @@ class KpiLogicTests(unittest.TestCase):
         self.assertEqual(result.stats.throughput_source, "scope_score")
         self.assertEqual(result.stats.schedule_rate, 1.0)
         self.assertEqual(result.stats.throughput_rate, 1.0)
-        self.assertTrue(any("nguồn=plan_due_date" in item for item in result.trace))
+        self.assertTrue(any("nguồn hạn=plan_due_date" in item for item in result.trace))
+        self.assertTrue(any("resolutiondate" in item for item in result.trace))
+
+    def test_score_bands_match_excel(self) -> None:
+        self.assertEqual(commitment_rate_to_score(0.89), 8.0)
+        self.assertEqual(schedule_rate_to_score(0.89), 8.5)
+        self.assertEqual(throughput_rate_to_score(0.80), 8.5)
+        self.assertEqual(throughput_rate_to_score(0.79), 7.0)
+        self.assertEqual(schedule_rate_to_score(0.70), 7.5)
+        self.assertEqual(schedule_rate_to_score(0.69), 6.0)
+
+    def test_compute_uses_resolution_date_not_updated_for_schedule(self) -> None:
+        payload = KpiAgentPayload(
+            role="developer",
+            period={"type": "month", "month": "2026-07"},
+            assignee="hung.tran",
+            projects=["TI"],
+            issues=[
+                {
+                    "key": "TI-1",
+                    "summary": "Done early then edited late",
+                    "status_category": "done",
+                    "status_name": "Done",
+                    "due_date": "2026-07-10",
+                    "resolution_date": "2026-07-09T08:00:00Z",
+                    "updated": "2026-07-25T10:00:00Z",
+                    "story_points": 2,
+                }
+            ],
+        )
+        result = compute_developer_kpi(payload)
+        self.assertEqual(result.stats.schedule_rate, 1.0)
+        self.assertEqual(result.stats.commitment_rate, 1.0)
+        note = next(item.note for item in result.evidence if item.key == "TI-1")
+        self.assertIn("resolutiondate", note)
+        self.assertIn("Đúng hạn", note)
+
+    def test_throughput_allows_partial_story_points_and_scope_hybrid(self) -> None:
+        payload = KpiAgentPayload(
+            role="developer",
+            period={"type": "month", "month": "2026-07"},
+            assignee="hung.tran",
+            projects=["TI"],
+            plan_items=[
+                KpiPlanItem(
+                    row_number=3,
+                    issue_key="TI-1",
+                    task_title="Has SP",
+                    plan_type="committed",
+                    scope_score=None,
+                ),
+                KpiPlanItem(
+                    row_number=4,
+                    issue_key="TI-2",
+                    task_title="Has scope only",
+                    plan_type="committed",
+                    scope_score=5,
+                ),
+                KpiPlanItem(
+                    row_number=5,
+                    issue_key="TI-3",
+                    task_title="Missing both",
+                    plan_type="committed",
+                ),
+            ],
+            issues=[
+                {
+                    "key": "TI-1",
+                    "summary": "Has SP",
+                    "status_category": "done",
+                    "status_name": "Done",
+                    "due_date": "2026-07-10",
+                    "resolution_date": "2026-07-09T08:00:00Z",
+                    "story_points": 3,
+                },
+                {
+                    "key": "TI-2",
+                    "summary": "Has scope only",
+                    "status_category": "done",
+                    "status_name": "Done",
+                    "due_date": None,
+                    "resolution_date": "2026-07-09T08:00:00Z",
+                    "story_points": None,
+                },
+                {
+                    "key": "TI-3",
+                    "summary": "Missing both",
+                    "status_category": "indeterminate",
+                    "status_name": "In Progress",
+                    "story_points": None,
+                },
+            ],
+        )
+        result = compute_developer_kpi(payload)
+        self.assertEqual(result.stats.throughput_source, "hybrid")
+        self.assertEqual(result.stats.throughput_rate, 1.0)
+        self.assertEqual(result.stats.throughput_committed_scope, 8.0)
+        self.assertAlmostEqual(result.stats.throughput_coverage or 0, 2 / 3, places=4)
+        self.assertTrue(any("Thiếu khối lượng" in note for note in result.notes))
+
+    def test_schedule_partial_due_dates_sets_coverage(self) -> None:
+        payload = KpiAgentPayload(
+            role="developer",
+            period={"type": "sprint", "sprint": "1"},
+            assignee="hung.tran",
+            projects=["TI"],
+            issues=[
+                {
+                    "key": "TI-1",
+                    "summary": "With due",
+                    "status_category": "done",
+                    "status_name": "Done",
+                    "due_date": "2026-07-10",
+                    "resolution_date": "2026-07-09T08:00:00Z",
+                    "story_points": 1,
+                },
+                {
+                    "key": "TI-2",
+                    "summary": "No due",
+                    "status_category": "done",
+                    "status_name": "Done",
+                    "due_date": None,
+                    "resolution_date": "2026-07-09T08:00:00Z",
+                    "story_points": 1,
+                },
+            ],
+        )
+        result = compute_developer_kpi(payload)
+        self.assertEqual(result.stats.on_time_eligible, 1)
+        self.assertEqual(result.stats.schedule_rate, 1.0)
+        self.assertEqual(result.stats.schedule_coverage, 0.5)
+        k6 = next(item.value for item in result.cell_updates if item.cell == "K6")
+        self.assertEqual(k6, 10.0)
 
     def test_apply_cell_updates_formats_plain_number_cells(self) -> None:
         calculated = KpiCalculateResponse(
@@ -280,7 +451,13 @@ class KpiLogicTests(unittest.TestCase):
         jira = FakeJiraService(
             [
                 IssuesResponse(
-                    issues=[self.make_issue("TI-801", updated="2026-06-30T10:00:00Z")],
+                    issues=[
+                        self.make_issue(
+                            "TI-801",
+                            updated="2026-07-20T10:00:00Z",
+                            resolution_date="2026-06-30T10:00:00Z",
+                        )
+                    ],
                     total=1,
                     returned=1,
                     truncated=False,

@@ -69,7 +69,28 @@ def _parse_date(value: str | None) -> date | None:
         return None
 
 
-def rate_to_score(rate: float | None) -> float | str:
+def completion_date_of(issue: Any) -> tuple[date | None, str]:
+    """Prefer real completion signals over last-updated noise.
+
+    Priority:
+    1. resolutiondate
+    2. statuscategorychangedate (when status moved into Done)
+    3. updated (last resort)
+    """
+    resolution = _parse_date(getattr(issue, "resolution_date", None))
+    if resolution is not None:
+        return resolution, "resolutiondate"
+    status_changed = _parse_date(getattr(issue, "status_category_change_date", None))
+    if status_changed is not None:
+        return status_changed, "statuscategorychangedate"
+    updated = _parse_date(getattr(issue, "updated", None))
+    if updated is not None:
+        return updated, "updated"
+    return None, "none"
+
+
+def commitment_rate_to_score(rate: float | None) -> float | str:
+    """Excel Commitment Achievement bands (thang 10)."""
     if rate is None:
         return "x"
     if rate >= 1.0:
@@ -82,6 +103,38 @@ def rate_to_score(rate: float | None) -> float | str:
         return 8.0
     return 6.0
 
+
+def schedule_rate_to_score(rate: float | None) -> float | str:
+    """Excel Schedule Performance bands (thang 10)."""
+    if rate is None:
+        return "x"
+    if rate >= 0.95:
+        return 10.0
+    if rate >= 0.90:
+        return 9.5
+    if rate >= 0.80:
+        return 8.5
+    if rate >= 0.70:
+        return 7.5
+    return 6.0
+
+
+def throughput_rate_to_score(rate: float | None) -> float | str:
+    """Excel Work Throughput bands (thang 10)."""
+    if rate is None:
+        return "x"
+    if rate >= 0.95:
+        return 10.0
+    if rate >= 0.90:
+        return 9.5
+    if rate >= 0.80:
+        return 8.5
+    return 7.0
+
+
+# Backward-compatible alias used by older call sites / tests.
+def rate_to_score(rate: float | None) -> float | str:
+    return commitment_rate_to_score(rate)
 
 def compute_developer_kpi(payload: KpiAgentPayload) -> KpiAgentResult:
     """Apply kpi-developer skill rules to the issue dataset."""
@@ -160,9 +213,12 @@ def compute_developer_kpi(payload: KpiAgentPayload) -> KpiAgentResult:
     trace.append(f"Cam kết: {completed}/{committed} issue hoàn thành.")
 
     plan_by_key = {item.issue_key.upper(): item for item in planned_items}
+    evidence_by_key = {item.key.upper(): item for item in evidence}
     on_time_completed = 0
     on_time_eligible = 0
     schedule_sources: set[str] = set()
+    completion_sources: set[str] = set()
+    missing_due_count = 0
     for issue in completed_issues:
         planned = plan_by_key.get(issue.key.upper())
         if issue.due_date:
@@ -173,74 +229,125 @@ def compute_developer_kpi(payload: KpiAgentPayload) -> KpiAgentResult:
             if due is not None:
                 schedule_sources.add("plan_due_date")
         if due is None:
+            missing_due_count += 1
             notes.append(f"{issue.key}: thiếu hạn dự kiến — loại khỏi Đúng hạn.")
             continue
         on_time_eligible += 1
-        done_on = _parse_date(issue.updated) or due
+        done_on, completion_source = completion_date_of(issue)
+        if done_on is None:
+            notes.append(f"{issue.key}: thiếu ngày hoàn thành — dùng hạn dự kiến làm tham chiếu.")
+            done_on = due
+            completion_source = "fallback_due"
+        completion_sources.add(completion_source)
+        existing = evidence_by_key.get(issue.key.upper())
         if done_on <= due:
             on_time_completed += 1
-            evidence.append(KpiEvidenceItem(key=issue.key, bucket="on_time", note=f"hạn {due}"))
+            schedule_note = f"Đúng hạn · hạn {due} · hoàn thành {done_on} ({completion_source})"
+        else:
+            schedule_note = f"Trễ hạn · hạn {due}, hoàn thành {done_on} ({completion_source})"
+        if existing:
+            base_note = existing.note.strip()
+            existing.note = f"{base_note} · {schedule_note}" if base_note else schedule_note
         else:
             evidence.append(
                 KpiEvidenceItem(
                     key=issue.key,
-                    bucket="late",
-                    note=f"hạn {due}, hoàn thành {done_on}",
+                    bucket="on_time" if done_on <= due else "late",
+                    note=schedule_note,
                 )
             )
 
     schedule_rate = (on_time_completed / on_time_eligible) if on_time_eligible else None
+    schedule_coverage = (on_time_eligible / completed) if completed else None
     if not schedule_sources:
         schedule_source = "none"
     elif len(schedule_sources) == 1:
         schedule_source = next(iter(schedule_sources))
     else:
         schedule_source = "mixed"
-    if on_time_eligible:
+    if completed:
         trace.append(
-            f"Đúng hạn: {on_time_completed}/{on_time_eligible} issue đủ điều kiện, nguồn={schedule_source}."
+            f"Đúng hạn coverage: {on_time_eligible}/{completed} issue hoàn thành có hạn "
+            f"(thiếu hạn={missing_due_count})."
         )
-        trace.append("Đúng hạn hiện dùng thời điểm `updated` trên Jira như tín hiệu hoàn thành gần đúng.")
+    if on_time_eligible:
+        completion_source_label = (
+            next(iter(completion_sources))
+            if len(completion_sources) == 1
+            else "mixed"
+        )
+        trace.append(
+            f"Đúng hạn: {on_time_completed}/{on_time_eligible} issue đủ điều kiện, "
+            f"nguồn hạn={schedule_source}, nguồn hoàn thành={completion_source_label}."
+        )
+    elif completed:
+        notes.append(
+            "Không có issue hoàn thành nào có due date (Jira) hoặc hạn kế hoạch — "
+            "Schedule Performance (J6) = x."
+        )
 
-    points_ready = bool(committed_issues) and all(issue.story_points is not None for issue in committed_issues)
-    scope_ready = bool(committed_issues) and all(
-        (plan_by_key.get(issue.key.upper()) and plan_by_key[issue.key.upper()].scope_score is not None)
-        for issue in committed_issues
-    )
+    # Throughput: per-issue scope = story_points → plan scope_score. Partial coverage OK.
+    scope_sources_used: set[str] = set()
+    throughput_committed_scope = 0.0
+    throughput_completed_scope = 0.0
+    throughput_eligible = 0
+    missing_scope_keys: list[str] = []
+    for issue in committed_issues:
+        planned = plan_by_key.get(issue.key.upper())
+        if issue.story_points is not None:
+            scope = float(issue.story_points)
+            scope_sources_used.add("story_points")
+        elif planned is not None and planned.scope_score is not None:
+            scope = float(planned.scope_score)
+            scope_sources_used.add("scope_score")
+        else:
+            missing_scope_keys.append(issue.key)
+            continue
+        throughput_eligible += 1
+        throughput_committed_scope += scope
+        if issue.status_category == "done":
+            throughput_completed_scope += scope
 
-    throughput_source: str = "none"
     throughput_rate: float | None = None
-    throughput_completed_scope: float | None = None
-    throughput_committed_scope: float | None = None
-    if points_ready:
-        throughput_source = "story_points"
-        throughput_committed_scope = sum(float(issue.story_points or 0) for issue in committed_issues)
-        throughput_completed_scope = sum(float(issue.story_points or 0) for issue in completed_issues)
-    elif scope_ready:
-        throughput_source = "scope_score"
-        throughput_committed_scope = sum(
-            float(plan_by_key[issue.key.upper()].scope_score or 0) for issue in committed_issues
+    throughput_coverage = (throughput_eligible / committed) if committed else None
+    if not scope_sources_used:
+        throughput_source = "none"
+        notes.append(
+            "Thiếu story points và scope score — Work Throughput (J7) = x. "
+            "Điền Scope Score trên Kế hoạch Developer hoặc gán Story Points trên Jira."
         )
-        throughput_completed_scope = sum(
-            float(plan_by_key[issue.key.upper()].scope_score or 0) for issue in completed_issues
-        )
+        throughput_committed_scope_out: float | None = None
+        throughput_completed_scope_out: float | None = None
     else:
-        notes.append("Thiếu story points và scope score đầy đủ — Work Throughput (J7) = x.")
-
-    if throughput_committed_scope and throughput_committed_scope > 0:
-        throughput_rate = throughput_completed_scope / throughput_committed_scope
-    if throughput_source != "none" and throughput_committed_scope is not None:
+        if scope_sources_used == {"story_points"}:
+            throughput_source = "story_points"
+        elif scope_sources_used == {"scope_score"}:
+            throughput_source = "scope_score"
+        else:
+            throughput_source = "hybrid"
+        if throughput_committed_scope > 0:
+            throughput_rate = throughput_completed_scope / throughput_committed_scope
+        throughput_committed_scope_out = round(throughput_committed_scope, 4)
+        throughput_completed_scope_out = round(throughput_completed_scope, 4)
         trace.append(
             "Thông lượng: "
-            f"{throughput_completed_scope}/{throughput_committed_scope}, nguồn={throughput_source}."
+            f"{throughput_completed_scope_out}/{throughput_committed_scope_out}, "
+            f"nguồn={throughput_source}, coverage={throughput_eligible}/{committed}."
         )
+        if missing_scope_keys:
+            preview = ", ".join(missing_scope_keys[:8])
+            more = f" (+{len(missing_scope_keys) - 8})" if len(missing_scope_keys) > 8 else ""
+            notes.append(
+                f"Thiếu khối lượng cho {len(missing_scope_keys)}/{committed} issue cam kết "
+                f"(đã loại khỏi Thông lượng): {preview}{more}."
+            )
 
     j5 = round(commitment_rate, 4)
-    k5 = rate_to_score(commitment_rate)
+    k5 = commitment_rate_to_score(commitment_rate)
     j6: float | str = round(schedule_rate, 4) if schedule_rate is not None else "x"
-    k6 = rate_to_score(schedule_rate)
+    k6 = schedule_rate_to_score(schedule_rate)
     j7: float | str = round(throughput_rate, 4) if throughput_rate is not None else "x"
-    k7 = rate_to_score(throughput_rate)
+    k7 = throughput_rate_to_score(throughput_rate)
 
     cell_updates = [
         KpiCellUpdate(sheet=SHEET_DEVELOPER, cell="H5", value=completed),
@@ -254,12 +361,12 @@ def compute_developer_kpi(payload: KpiAgentPayload) -> KpiAgentResult:
         KpiCellUpdate(
             sheet=SHEET_DEVELOPER,
             cell="H7",
-            value=round(throughput_completed_scope, 4) if throughput_completed_scope is not None else "x",
+            value=throughput_completed_scope_out if throughput_completed_scope_out is not None else "x",
         ),
         KpiCellUpdate(
             sheet=SHEET_DEVELOPER,
             cell="I7",
-            value=round(throughput_committed_scope, 4) if throughput_committed_scope is not None else "x",
+            value=throughput_committed_scope_out if throughput_committed_scope_out is not None else "x",
         ),
         KpiCellUpdate(sheet=SHEET_DEVELOPER, cell="J7", value=j7),
         KpiCellUpdate(sheet=SHEET_DEVELOPER, cell="K7", value=k7),
@@ -275,21 +382,18 @@ def compute_developer_kpi(payload: KpiAgentPayload) -> KpiAgentResult:
             commitment_rate=round(commitment_rate, 4),
             schedule_rate=round(schedule_rate, 4) if schedule_rate is not None else None,
             schedule_source=schedule_source,
+            schedule_coverage=round(schedule_coverage, 4) if schedule_coverage is not None else None,
             throughput_rate=round(throughput_rate, 4) if throughput_rate is not None else None,
             throughput_source=throughput_source,
-            throughput_completed_scope=round(throughput_completed_scope, 4)
-            if throughput_completed_scope is not None
-            else None,
-            throughput_committed_scope=round(throughput_committed_scope, 4)
-            if throughput_committed_scope is not None
-            else None,
+            throughput_coverage=round(throughput_coverage, 4) if throughput_coverage is not None else None,
+            throughput_completed_scope=throughput_completed_scope_out,
+            throughput_committed_scope=throughput_committed_scope_out,
         ),
         cell_updates=cell_updates,
         evidence=evidence,
         notes=notes,
         trace=trace,
     )
-
 
 def extract_json_object(text: str) -> dict[str, Any]:
     text = text.strip()

@@ -110,8 +110,10 @@ export type KpiStats = {
   commitment_rate: number
   schedule_rate: number | null
   schedule_source?: 'jira_due_date' | 'plan_due_date' | 'mixed' | 'none'
+  schedule_coverage?: number | null
   throughput_rate: number | null
-  throughput_source?: 'story_points' | 'scope_score' | 'none'
+  throughput_source?: 'story_points' | 'scope_score' | 'hybrid' | 'none'
+  throughput_coverage?: number | null
   throughput_completed_scope?: number | null
   throughput_committed_scope?: number | null
 }

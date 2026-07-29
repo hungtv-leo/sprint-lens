@@ -142,7 +142,9 @@ export function ProjectFilters({
             onChange={(value) => onAssigneeChange(value ?? '')}
             disabled={selectedProjects.length === 0}
             loading={usersQuery.isFetching}
-            options={(usersQuery.data ?? []).map((user) => ({
+            options={(usersQuery.data ?? [])
+              .filter((user) => user.active !== false)
+              .map((user) => ({
               value: userFilterValue(user),
               label: user.email
                 ? `${user.display_name} (${user.email})`
