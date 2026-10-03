@@ -1,0 +1,18 @@
+---
+description: Always run verify-until-done; use ship-change for feature/hotfix/bugfix
+alwaysApply: true
+---
+
+# Verify until Done + Ship
+
+After any code change in this repo:
+
+1. Read root `AGENTS.md` for verify commands and hard stops
+2. Feature / hotfix / bugfix → follow project skill `ship-change`
+3. Always loop with project skill `verify-until-done` (max 8) until PASS or stop and ask
+4. Never claim Done on red verify; never skip verify for a “small” change
+5. Commit / push / PR / deploy only when the user explicitly asks
+
+✅ `cd frontend && npm run lint` then build before Done on UI changes  
+✅ `cd backend && python -m pytest` on backend changes  
+❌ “Fixed locally, you can run tests later”
