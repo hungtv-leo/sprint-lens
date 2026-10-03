@@ -91,7 +91,7 @@ export type JiraHealth = {
 export type KpiPeriodType = 'sprint' | 'month'
 
 export type KpiRequest = {
-  role: 'developer'
+  role: 'developer' | 'lead_developer'
   period: {
     type: KpiPeriodType
     sprint?: string | null
@@ -107,7 +107,7 @@ export type KpiStats = {
   incomplete: number
   on_time_completed: number
   on_time_eligible: number
-  commitment_rate: number
+  commitment_rate: number | null
   schedule_rate: number | null
   schedule_source?: 'jira_due_date' | 'plan_due_date' | 'mixed' | 'none'
   schedule_coverage?: number | null
@@ -158,4 +158,49 @@ export type KpiCalculateResponse = {
     notes: string[]
     trace: string[]
   }
+}
+
+export type OpsWorkType = {
+  code: string
+  label: string
+}
+
+export type OpsCaseItem = {
+  id: number
+  handler: string
+  handler_display_name: string
+  work_type: string
+  work_type_label: string
+  created_at: string
+}
+
+export type OpsCaseCreate = {
+  handler: string
+  handler_display_name: string
+  work_type: string
+}
+
+export type OpsCaseListResponse = {
+  items: OpsCaseItem[]
+  total: number
+}
+
+export type OpsHandlerStat = {
+  handler: string
+  handler_display_name: string
+  total: number
+  by_work_type: Record<string, number>
+}
+
+export type OpsWorkTypeStat = {
+  work_type: string
+  work_type_label: string
+  total: number
+}
+
+export type OpsCaseStatsResponse = {
+  month: string
+  total: number
+  by_handler: OpsHandlerStat[]
+  by_work_type: OpsWorkTypeStat[]
 }

@@ -8,13 +8,16 @@
 
 ## 1. Tổng quan cơ chế
 
-Hệ thống KPI Developer đánh giá theo **3 tiêu chí lớn**, tổng tỷ trọng **100%**:
+Hệ thống KPI Developer đánh giá theo **3 tiêu chí lớn**, tổng tỷ trọng **100%** (theo công thức Excel trên sheet `KPI Developer Demo`):
 
-| Tiêu chí | Tên | Tỷ trọng |
+| Tiêu chí | Tên | Tỷ trọng (công thức sheet) |
 |----------|-----|----------|
-| **A** | Hiệu quả công việc | **75%** |
-| **B** | Tinh thần và trách nhiệm | **20%** |
+| **A** | Hiệu quả công việc | **80%** nền (Delivery 35% + Quality 20% + Reliability 10% + Collaboration 10% + Growth 5%) + tối đa **+20% Impact Bonus** khi CBQL chấm |
+| **B** | Tinh thần và trách nhiệm | **15%** |
 | **C** | Kỷ luật lao động | **5%** |
+
+Khi **chưa chấm Impact Bonus** (điểm bonus = 0): tổng max = **100%** (A 80% + B 15% + C 5%).  
+Khi CBQL nhập điểm Impact Bonus (ô `O18`, thang 10): phần A tăng thêm tới **20%** (`0.2×O18/10`), tổng KPI có thể **vượt 100%**.
 
 ### Nguyên tắc chung
 
@@ -53,30 +56,34 @@ Với **tiêu chí B, C**: dùng **Thực đạt** + **Điểm đạt = Thực �
 
 ---
 
-## 3. Tiêu chí A — Hiệu quả công việc (75%)
+## 3. Tiêu chí A — Hiệu quả công việc (80% theo công thức Excel)
 
 ### 3.1. Công thức tổng của A
 
+Theo ô `F3` / `K3` trên sheet:
+
 ```text
-A = 30% × Delivery
+A = 35% × Delivery
   + 20% × Quality
   + 10% × Reliability
   + 10% × Collaboration
   +  5% × Growth
+  + 20% × Impact Bonus   (CBQL chấm; để 0 nếu không có)
 ```
 
 Công thức Excel (thang điểm đã /10 để ra tỷ lệ đóng góp):
 
 ```text
-A_NV   = (0.3×Delivery + 0.2×Quality + 0.1×Reliability + 0.1×Collaboration + 0.05×Growth) / 10
-A_CBQL = (cùng công thức với cột điểm CBQL)
+A_NV   = (0.35×Delivery + 0.2×Quality + 0.1×Reliability + 0.1×Collaboration + 0.05×Growth + 0.2×ImpactBonus) / 10
+A_CBQL = (cùng công thức với cột điểm CBQL; Impact Bonus thường ở O18)
 ```
 
-Ví dụ: nếu tất cả nhóm đạt 10/10 thì `A = (0.3+0.2+0.1+0.1+0.05)×10/10 = 0.75` → **75%**.
+Ví dụ: các nhóm nền đạt 10/10 và bonus = 0 → `A = 0.80` (**80%**), tổng A+B+C max = **100%**.  
+Nếu CBQL chấm Impact Bonus = 10 → thêm 20%, `A = 1.00`, tổng có thể tới **120%**.
 
 ---
 
-### 3.2. Delivery KPI (trọng số trong A: 30%)
+### 3.2. Delivery KPI (trọng số trong A: 35%)
 
 **Mục đích:** Phản ánh khả năng chuyển giao công việc đã cam kết thành kết quả có giá trị.
 
@@ -116,6 +123,7 @@ Commitment rate = Số issue hoàn thành / Số issue đã cam kết
 
 > Sprint Lens: ngày hoàn thành ưu tiên `resolutiondate` → `statuscategorychangedate` → `updated`.  
 > Thiếu due date / story points: vẫn tính trên tập đủ dữ liệu (hiển thị coverage), hoặc `x` nếu không còn mẫu nào.
+> Sprint Lens hiện chỉ auto-fill phần Delivery KPI (`1.1`, `1.2`, `1.3`) vào file mẫu; các phần Ownership, Quality, B, C vẫn cần đánh giá thủ công.
 
 #### 3.2.2. Schedule Performance (1.2) — trọng số 25% trong Delivery
 
@@ -330,12 +338,12 @@ Growth = 35% × Learning Goal Achievement
 
 ---
 
-## 4. Tiêu chí B — Tinh thần và trách nhiệm (20%)
+## 4. Tiêu chí B — Tinh thần và trách nhiệm (15%)
 
 **Công thức từng hạng mục:**
 
 ```text
-Điểm đóng góp = Trọng số × Điểm đạt × 20%
+Điểm đóng góp = Trọng số × Điểm đạt × 15%
 Điểm đạt      = Thực đạt / Kế hoạch
 ```
 
@@ -348,7 +356,7 @@ Kế hoạch mặc định mỗi hạng mục = **10 điểm**.
 | 3 | Tuân thủ kỷ luật trong công việc, chấp hành yêu cầu cấp trên và nội quy | 0.40 |
 
 Tổng trọng số nội bộ B = 1.0.  
-Tổng điểm B = tổng các điểm đóng góp của 3 hạng mục (tối đa ~20%).
+Tổng điểm B = tổng các điểm đóng góp của 3 hạng mục (tối đa ~15%).
 
 ---
 
@@ -441,17 +449,19 @@ Trong hệ thống Sprint Lens, phần **auto-fill từ Jira** tập trung vào 
                     └──────────────┬──────────────────────┘
            ┌───────────────────────┼───────────────────────┐
            ▼                       ▼                       ▼
-     A. Hiệu quả 75%        B. Tinh thần 20%        C. Kỷ luật 5%
+     A. Hiệu quả 80%        B. Tinh thần 15%        C. Kỷ luật 5%
            │
      ┌─────┴──────────────────────────────────────────┐
      ▼         ▼          ▼            ▼           ▼
- Delivery  Quality  Reliability  Collaboration  Growth
-   30%       20%       10%          10%         5%
+ Delivery  Quality  Reliability  Collaboration  Growth  ImpactBonus
+   35%       20%       10%          10%         5%       20%*
      │
      ├─ 40% Commitment Achievement   (định lượng)
      ├─ 25% Schedule Performance     (định lượng)
      ├─ 20% Work Throughput          (định lượng)
      └─ 15% Delivery Ownership       (rubric CBQL)
+
+(*) Impact Bonus mặc định 0 → tổng max 100%; CBQL chấm thì tổng tăng (tới +20%).
 ```
 
 ---

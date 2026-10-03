@@ -36,7 +36,7 @@
 | `stats.incomplete` | int |
 | `stats.on_time_completed` | int |
 | `stats.on_time_eligible` | int |
-| `stats.commitment_rate` | number |
+| `stats.commitment_rate` | number \| null |
 | `stats.schedule_rate` | number \| null |
 | `stats.schedule_source` | `jira_due_date` \| `plan_due_date` \| `mixed` \| `none` |
 | `stats.schedule_coverage` | number \| null |

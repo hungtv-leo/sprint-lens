@@ -98,6 +98,7 @@ docker compose up --build
 - `POST /api/kpi/export`
 
 Skill Developer nằm tại `.cursor/skills/kpi-developer/`. Module UI: `/kpi`.
+Luồng KPI hiện tại chỉ auto-fill phần Delivery KPI (Cam kết, Đúng hạn, Thông lượng) vào file mẫu tháng.
 
 Optional env cho Agent:
 

@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.issues import router as issues_router
 from app.api.kpi import router as kpi_router
+from app.api.ops import router as ops_router
 from app.api.projects import router as projects_router
 from app.api.sprints import router as sprints_router
 from app.api.statuses import router as statuses_router
@@ -32,3 +33,4 @@ app.include_router(sprints_router)
 app.include_router(users_router)
 app.include_router(system_router)
 app.include_router(kpi_router)
+app.include_router(ops_router)

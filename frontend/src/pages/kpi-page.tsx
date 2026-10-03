@@ -13,7 +13,6 @@ import {
   DatePicker,
   Descriptions,
   List,
-  Radio,
   Row,
   Select,
   Space,
@@ -27,15 +26,10 @@ import type { UploadFile } from 'antd/es/upload/interface'
 
 import { PageBody } from '../components/layout/page-body'
 import { TopBar } from '../components/layout/top-bar'
-import { useProjects, useSprints, useUsers } from '../hooks/jira-hooks'
+import { useProjects, useUsers } from '../hooks/jira-hooks'
 import { useLocalStorage } from '../hooks/use-local-storage'
 import { calculateKpiWithWorkbook, downloadKpiTemplate, exportKpi, userFilterValue } from '../lib/api'
-import type {
-  KpiCalculateResponse,
-  KpiPeriodType,
-  KpiPlanValidationIssue,
-  KpiRequest,
-} from '../lib/types'
+import type { KpiCalculateResponse, KpiPlanValidationIssue, KpiRequest } from '../lib/types'
 
 function formatRate(value: number | null | undefined) {
   if (value == null) return '—'
@@ -79,7 +73,7 @@ const WARNING_LABELS: Record<string, string> = {
   missing_in_jira: 'Thiếu trên Jira',
   assignee_mismatch: 'Không khớp người được giao',
   assignee_mismatch_summary: 'Tóm tắt người được giao',
-  unplanned_issue: 'Ngoài kế hoạch (không gồm subtask)',
+  unplanned_issue: 'Ngoài kế hoạch (In Progress, không gồm subtask)',
   jira_truncated: 'Dữ liệu Jira bị cắt ngưỡng',
   outside_requested_month: 'Ngoài tháng đang tính',
   expected_due_date_out_of_month: 'Hạn dự kiến lệch tháng',
@@ -144,10 +138,12 @@ export function KpiPage() {
     'sprint-lens.projects',
     [],
   )
-  const [periodType, setPeriodType] = useState<KpiPeriodType>('sprint')
-  const [sprint, setSprint] = useLocalStorage<string>('sprint-lens.sprint', '')
   const [month, setMonth] = useState<Dayjs>(dayjs())
   const [assignee, setAssignee] = useLocalStorage<string>('sprint-lens.assignee', '')
+  const [staffLevel, setStaffLevel] = useLocalStorage<'developer' | 'lead_developer'>(
+    'sprint-lens.kpi-staff-level',
+    'developer',
+  )
   const [calculating, setCalculating] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [result, setResult] = useState<KpiCalculateResponse | null>(null)
@@ -155,16 +151,12 @@ export function KpiPage() {
   const [planFile, setPlanFile] = useState<File | null>(null)
 
   const projectsQuery = useProjects()
-  const sprintsQuery = useSprints(selectedProjects)
   const usersQuery = useUsers(selectedProjects)
 
-  const requiresWorkbook = periodType === 'month'
-  const requiresSprint = periodType === 'sprint'
   const canSubmit =
     selectedProjects.length > 0 &&
     Boolean(assignee.trim()) &&
-    (!requiresWorkbook || Boolean(planFile)) &&
-    (!requiresSprint || Boolean(sprint))
+    Boolean(planFile)
 
   function clearCalculation() {
     setResult(null)
@@ -174,15 +166,12 @@ export function KpiPage() {
   const requestBody: KpiRequest | null = useMemo(() => {
     if (!canSubmit) return null
     return {
-      role: 'developer',
+      role: staffLevel,
       assignee: assignee.trim(),
       projects: selectedProjects,
-      period:
-        periodType === 'sprint'
-          ? { type: 'sprint', sprint: sprint || null }
-          : { type: 'month', month: month.format('YYYY-MM') },
+      period: { type: 'month', month: month.format('YYYY-MM') },
     }
-  }, [assignee, canSubmit, month, periodType, selectedProjects, sprint])
+  }, [assignee, canSubmit, month, selectedProjects, staffLevel])
 
   async function handleCalculate() {
     if (!requestBody) return
@@ -209,12 +198,9 @@ export function KpiPage() {
       const blob = await exportKpi(requestBody, planFile ?? undefined)
       const url = URL.createObjectURL(blob)
       const anchor = document.createElement('a')
-      const stamp =
-        requestBody.period.type === 'month'
-          ? requestBody.period.month
-          : requestBody.period.sprint ?? 'all-project'
+      const stamp = requestBody.period.month
       anchor.href = url
-      anchor.download = `KPI_developer_${requestBody.assignee}_${stamp}.xlsx`
+      anchor.download = `KPI_${requestBody.role}_${requestBody.assignee}_${stamp}.xlsx`
       anchor.click()
       URL.revokeObjectURL(url)
       message.success('Đã xuất file KPI đã tính')
@@ -250,49 +236,30 @@ export function KpiPage() {
   const blockingWarnings = warnings.filter((item) => item.blocking)
   const canExport = Boolean(requestBody) && Boolean(result) && blockingWarnings.length === 0
   const evidenceRows = groupEvidenceByKey(result?.result.evidence ?? [])
-  const checklist = requiresWorkbook
-    ? [
-        {
-          done: selectedProjects.length > 0,
-          label: 'Chọn ít nhất 1 dự án',
-        },
-        {
-          done: Boolean(assignee.trim()),
-          label: 'Chọn nhân viên',
-        },
-        {
-          done: Boolean(planFile),
-          label: 'Tải lên file kế hoạch đã điền',
-        },
-        {
-          done: Boolean(result),
-          label: 'Tính toán và kiểm tra cảnh báo',
-        },
-      ]
-    : [
-        {
-          done: selectedProjects.length > 0,
-          label: 'Chọn ít nhất 1 dự án',
-        },
-        {
-          done: Boolean(assignee.trim()),
-          label: 'Chọn nhân viên',
-        },
-        {
-          done: Boolean(sprint),
-          label: 'Chọn sprint cụ thể',
-        },
-        {
-          done: Boolean(result),
-          label: 'Tính toán trước khi xuất file KPI',
-        },
-      ]
+  const checklist = [
+    {
+      done: selectedProjects.length > 0,
+      label: 'Chọn ít nhất 1 dự án',
+    },
+    {
+      done: Boolean(assignee.trim()),
+      label: 'Chọn nhân viên',
+    },
+    {
+      done: Boolean(planFile),
+      label: 'Tải lên file kế hoạch đã điền',
+    },
+    {
+      done: Boolean(result),
+      label: 'Tính toán và kiểm tra cảnh báo',
+    },
+  ]
 
   return (
     <div>
       <TopBar
         title="KPI"
-        description="Tính toán và xuất KPI cho lập trình viên theo sprint hoặc theo tháng, rồi điền kết quả vào file mẫu."
+        description="Chọn Nhân viên hoặc Leader, tính Delivery KPI theo tháng và ghi vào đúng sheet mẫu."
       />
 
       <PageBody>
@@ -300,16 +267,6 @@ export function KpiPage() {
           <Col xs={24} xl={10}>
             <Card title="Bộ lọc" size="small">
               <Space direction="vertical" size={12} style={{ width: '100%' }}>
-                <div>
-                  <Typography.Text type="secondary">Vai trò</Typography.Text>
-                  <Select
-                    style={{ width: '100%', marginTop: 8 }}
-                    value="developer"
-                    options={[{ value: 'developer', label: 'Lập trình viên' }]}
-                    disabled
-                  />
-                </div>
-
                 <div>
                   <Typography.Text type="secondary">Dự án</Typography.Text>
                   <Select
@@ -367,163 +324,140 @@ export function KpiPage() {
                 </div>
 
                 <div>
-                  <Typography.Text type="secondary">Kỳ đánh giá</Typography.Text>
-                  <div style={{ marginTop: 8 }}>
-                    <Radio.Group
-                      value={periodType}
-                      onChange={(event) => {
-                        setPeriodType(event.target.value)
-                        clearCalculation()
-                      }}
-                      optionType="button"
-                      buttonStyle="solid"
-                      options={[
-                        { value: 'sprint', label: 'Theo sprint' },
-                        { value: 'month', label: 'Theo tháng' },
-                      ]}
-                    />
-                  </div>
+                  <Typography.Text type="secondary">Cấp bậc đánh giá</Typography.Text>
+                  <Select
+                    style={{ width: '100%', marginTop: 8 }}
+                    value={staffLevel}
+                    onChange={(value: 'developer' | 'lead_developer') => {
+                      setStaffLevel(value)
+                      clearCalculation()
+                    }}
+                    options={[
+                      { value: 'developer', label: 'Nhân viên' },
+                      { value: 'lead_developer', label: 'Leader' },
+                    ]}
+                  />
+                  <Typography.Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0 }}>
+                    {staffLevel === 'lead_developer'
+                      ? 'Xuất sheet KPI Lead Developer Demo (có Leadership + Impact Bonus).'
+                      : 'Xuất sheet KPI Developer Demo.'}
+                  </Typography.Paragraph>
                 </div>
 
-                {periodType === 'sprint' ? (
+                <Space direction="vertical" size={12} style={{ width: '100%' }}>
                   <div>
-                    <Typography.Text type="secondary">Sprint áp dụng</Typography.Text>
-                    <Select
-                      allowClear
-                      style={{ width: '100%', marginTop: 8 }}
-                      placeholder="Chọn sprint"
-                      value={sprint || undefined}
-                      onChange={(value) => {
-                        setSprint(value ?? '')
-                        clearCalculation()
-                      }}
-                      options={[
-                        { value: 'active', label: 'Sprint đang chạy' },
-                        ...(sprintsQuery.data ?? []).map((item) => ({
-                          value: String(item.id),
-                          label: `${item.name} (${item.state})`,
-                        })),
-                      ]}
-                    />
+                    <Typography.Text type="secondary">Tháng</Typography.Text>
+                    <div style={{ marginTop: 8 }}>
+                      <DatePicker
+                        picker="month"
+                        style={{ width: '100%' }}
+                        value={month}
+                        onChange={(value) => {
+                          if (!value) return
+                          setMonth(value)
+                          clearCalculation()
+                        }}
+                        allowClear={false}
+                      />
+                    </div>
                   </div>
-                ) : (
-                  <Space direction="vertical" size={12} style={{ width: '100%' }}>
-                    <div>
-                      <Typography.Text type="secondary">Tháng</Typography.Text>
-                      <div style={{ marginTop: 8 }}>
-                        <DatePicker
-                          picker="month"
-                          style={{ width: '100%' }}
-                          value={month}
-                          onChange={(value) => {
-                            if (!value) return
-                            setMonth(value)
+
+                  <div>
+                    <Typography.Text type="secondary">File kế hoạch tháng</Typography.Text>
+                    <Space direction="vertical" size={10} style={{ width: '100%', marginTop: 8 }}>
+                      <Space wrap size={8}>
+                        <Button icon={<DownloadOutlined />} onClick={handleDownloadTemplate}>
+                          Tải mẫu để điền kế hoạch
+                        </Button>
+                        <Upload
+                          accept=".xlsx"
+                          maxCount={1}
+                          showUploadList={false}
+                          beforeUpload={(file) => {
+                            setPlanFile(file)
+                            clearCalculation()
+                            return false
+                          }}
+                          onRemove={() => {
+                            setPlanFile(null)
                             clearCalculation()
                           }}
-                          allowClear={false}
-                        />
-                      </div>
-                    </div>
-
-                    <div>
-                      <Typography.Text type="secondary">File kế hoạch tháng</Typography.Text>
-                      <Space direction="vertical" size={10} style={{ width: '100%', marginTop: 8 }}>
-                        <Space wrap size={8}>
-                          <Button icon={<DownloadOutlined />} onClick={handleDownloadTemplate}>
-                            Tải mẫu để điền kế hoạch
+                          fileList={
+                            planFile
+                              ? [
+                                  {
+                                    uid: 'plan-workbook',
+                                    name: planFile.name,
+                                    status: 'done',
+                                  } as UploadFile
+                                ]
+                              : []
+                          }
+                        >
+                          <Button type="primary" ghost icon={<UploadOutlined />}>
+                            Chọn file kế hoạch đã điền
                           </Button>
-                          <Upload
-                            accept=".xlsx"
-                            maxCount={1}
-                            showUploadList={false}
-                            beforeUpload={(file) => {
-                              setPlanFile(file)
-                              clearCalculation()
-                              return false
-                            }}
-                            onRemove={() => {
+                        </Upload>
+                      </Space>
+
+                      {planFile ? (
+                        <div
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            gap: 12,
+                            padding: '10px 12px',
+                            borderRadius: 10,
+                            background: 'rgba(255,255,255,0.03)',
+                            border: '1px solid rgba(255,255,255,0.08)',
+                          }}
+                        >
+                          <Space size={10}>
+                            <FileExcelOutlined />
+                            <div>
+                              <Typography.Text strong style={{ display: 'block' }}>
+                                File đã chọn
+                              </Typography.Text>
+                              <Typography.Text type="secondary">{planFile.name}</Typography.Text>
+                            </div>
+                          </Space>
+
+                          <Button
+                            type="text"
+                            icon={<CloseOutlined />}
+                            aria-label="Bỏ file đã chọn"
+                            onClick={() => {
                               setPlanFile(null)
                               clearCalculation()
                             }}
-                            fileList={
-                              planFile
-                                ? [
-                                    {
-                                      uid: 'plan-workbook',
-                                      name: planFile.name,
-                                      status: 'done',
-                                    } as UploadFile
-                                  ]
-                                : []
-                            }
-                          >
-                            <Button type="primary" ghost icon={<UploadOutlined />}>
-                              Chọn file kế hoạch đã điền
-                            </Button>
-                          </Upload>
-                        </Space>
+                          />
+                        </div>
+                      ) : (
+                        <Typography.Text type="secondary">
+                          Chưa có file nào được chọn. Nút này chỉ tải mẫu trống để điền, không phải xuất KPI.
+                        </Typography.Text>
+                      )}
+                    </Space>
+                  </div>
 
-                        {planFile ? (
-                          <div
-                            style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'space-between',
-                              gap: 12,
-                              padding: '10px 12px',
-                              borderRadius: 10,
-                              background: 'rgba(255,255,255,0.03)',
-                              border: '1px solid rgba(255,255,255,0.08)',
-                            }}
-                          >
-                            <Space size={10}>
-                              <FileExcelOutlined />
-                              <div>
-                                <Typography.Text strong style={{ display: 'block' }}>
-                                  File đã chọn
-                                </Typography.Text>
-                                <Typography.Text type="secondary">{planFile.name}</Typography.Text>
-                              </div>
-                            </Space>
-
-                            <Button
-                              type="text"
-                              icon={<CloseOutlined />}
-                              aria-label="Bỏ file đã chọn"
-                              onClick={() => {
-                                setPlanFile(null)
-                                clearCalculation()
-                              }}
-                            />
-                          </div>
-                        ) : (
-                          <Typography.Text type="secondary">
-                            Chưa có file nào được chọn. Nút này chỉ tải mẫu trống để điền, không phải xuất KPI.
-                          </Typography.Text>
-                        )}
-                      </Space>
-                    </div>
-
-                    <Alert
-                      type="info"
-                      showIcon
-                      message="Sheet bắt buộc: Kế hoạch Developer"
-                      description="Mỗi dòng là 1 mã Jira. Cột bắt buộc: Mã Jira, Tên công việc, Loại kế hoạch. Cột khuyến nghị: Hạn dự kiến (YYYY-MM-DD hoặc DD/MM/YYYY), Điểm khối lượng, Ghi chú / lý do loại trừ."
-                    />
-                  </Space>
-                )}
+                  <Alert
+                    type="info"
+                    showIcon
+                    message="Sheet bắt buộc: Kế hoạch Developer"
+                    description="Mỗi dòng là 1 mã Jira. Cột bắt buộc: Mã Jira, Tên công việc, Loại kế hoạch. Cột khuyến nghị: Hạn dự kiến (YYYY-MM-DD hoặc DD/MM/YYYY), Điểm khối lượng, Ghi chú / lý do loại trừ."
+                  />
+                </Space>
 
                 <Alert
                   type="info"
                   showIcon
-                  message={requiresWorkbook ? 'Các bước tính KPI theo tháng' : 'Điều kiện để tính KPI theo sprint'}
+                  message="Các bước tính KPI theo tháng"
                   description={
                     <Space direction="vertical" size={8} style={{ width: '100%' }}>
-                      {requiresWorkbook ? (
-                        <Typography.Text type="secondary">
-                          Tải mẫu để điền khác với Xuất file KPI đã tính. Chỉ xuất sau khi đã tính xong và không còn cảnh báo chặn.
-                        </Typography.Text>
-                      ) : null}
+                      <Typography.Text type="secondary">
+                        Tải mẫu để điền khác với Xuất file KPI đã tính. Chỉ xuất sau khi đã tính xong và không còn cảnh báo chặn.
+                      </Typography.Text>
                       <List
                         size="small"
                         dataSource={checklist.map(
@@ -533,6 +467,12 @@ export function KpiPage() {
                       />
                     </Space>
                   }
+                />
+                <Alert
+                  type="info"
+                  showIcon
+                  message="Phạm vi auto-fill"
+                  description="Sprint Lens hiện chỉ tự động điền phần Delivery KPI: Cam kết, Đúng hạn và Thông lượng. Các phần đánh giá khác trong file KPI vẫn cần điền hoặc đánh giá thủ công."
                 />
 
                 {!canSubmit ? (
@@ -614,14 +554,18 @@ export function KpiPage() {
 
               {!result && !error ? (
                 <Typography.Text type="secondary">
-                  {requiresWorkbook
-                    ? 'Chọn tháng, đính kèm file KPI có sheet Kế hoạch Developer rồi nhấn Tính toán để đối chiếu kế hoạch với Jira.'
-                    : 'Chọn sprint cụ thể rồi nhấn Tính toán để hệ thống đối chiếu công việc theo kỳ.'}
+                  Chọn tháng, đính kèm file KPI có sheet Kế hoạch Developer rồi nhấn Tính toán để tự động điền phần Delivery KPI và đối chiếu kế hoạch với Jira.
                 </Typography.Text>
               ) : null}
 
               {stats ? (
                 <Space direction="vertical" size={16} style={{ width: '100%' }}>
+                  <Alert
+                    type="info"
+                    showIcon
+                    message="KPI được auto-fill"
+                    description="Phần kết quả bên dưới chỉ áp dụng cho Delivery KPI trong file mẫu: Cam kết, Đúng hạn và Thông lượng."
+                  />
                   {result?.plan_summary ? (
                     <Descriptions size="small" bordered column={1}>
                       <Descriptions.Item label="Sheet kế hoạch">
@@ -633,16 +577,28 @@ export function KpiPage() {
                       <Descriptions.Item label="Cam kết">
                         {result.plan_summary.committed_rows}
                       </Descriptions.Item>
+                      <Descriptions.Item label="Dòng loại trừ">
+                        {result.plan_summary.excluded_rows}
+                      </Descriptions.Item>
                       <Descriptions.Item label="Khớp trên Jira">
                         {result.plan_summary.matched_issue_count}
                       </Descriptions.Item>
                       <Descriptions.Item label="Thiếu trên Jira">
                         {result.plan_summary.missing_in_jira_count}
                       </Descriptions.Item>
+                      <Descriptions.Item label="Dòng trùng mã Jira">
+                        {result.plan_summary.duplicate_keys}
+                      </Descriptions.Item>
+                      <Descriptions.Item label="Dòng thiếu mã Jira">
+                        {result.plan_summary.missing_key_rows}
+                      </Descriptions.Item>
+                      <Descriptions.Item label="Dòng không hợp lệ">
+                        {result.plan_summary.invalid_rows}
+                      </Descriptions.Item>
                       <Descriptions.Item label="Không khớp người được giao">
                         {result.plan_summary.assignee_mismatch_count}
                       </Descriptions.Item>
-                      <Descriptions.Item label="Ngoài kế hoạch (không gồm subtask)">
+                      <Descriptions.Item label="Ngoài kế hoạch (In Progress, không gồm subtask)">
                         {result.plan_summary.unplanned_issue_count}
                       </Descriptions.Item>
                       <Descriptions.Item label="Dữ liệu Jira bị cắt ngưỡng">
@@ -687,7 +643,7 @@ export function KpiPage() {
                       {stats.schedule_coverage != null ? (
                         <Typography.Text type="secondary">
                           {' '}
-                          · coverage {(stats.schedule_coverage * 100).toFixed(0)}%
+                          · độ phủ dữ liệu {(stats.schedule_coverage * 100).toFixed(0)}%
                         </Typography.Text>
                       ) : null}
                     </Descriptions.Item>
@@ -705,7 +661,7 @@ export function KpiPage() {
                       {stats.throughput_coverage != null ? (
                         <Typography.Text type="secondary">
                           {' '}
-                          · coverage {(stats.throughput_coverage * 100).toFixed(0)}%
+                          · độ phủ dữ liệu {(stats.throughput_coverage * 100).toFixed(0)}%
                         </Typography.Text>
                       ) : null}
                     </Descriptions.Item>

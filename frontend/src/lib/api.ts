@@ -8,6 +8,11 @@ import type {
   JiraUser,
   KpiCalculateResponse,
   KpiRequest,
+  OpsCaseCreate,
+  OpsCaseItem,
+  OpsCaseListResponse,
+  OpsCaseStatsResponse,
+  OpsWorkType,
   SummaryResponse,
 } from './types'
 
@@ -86,10 +91,6 @@ export function getJiraHealth() {
   return request<JiraHealth>('/api/health/jira')
 }
 
-export function calculateKpi(body: KpiRequest) {
-  return calculateKpiWithWorkbook(body)
-}
-
 function buildKpiFormData(body: KpiRequest, workbook?: File) {
   const form = new FormData()
   form.set('role', body.role)
@@ -146,4 +147,40 @@ export async function downloadKpiTemplate(): Promise<Blob> {
 
 export function userFilterValue(user: JiraUser) {
   return user.name || user.key || user.display_name
+}
+
+export function getOpsWorkTypes() {
+  return request<OpsWorkType[]>('/api/ops/work-types')
+}
+
+export function createOpsCase(body: OpsCaseCreate) {
+  return request<OpsCaseItem>('/api/ops/cases', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
+export function getOpsCases(params: { month?: string; handler?: string; limit?: number }) {
+  const search = new URLSearchParams()
+  if (params.month) search.set('month', params.month)
+  if (params.handler) search.set('handler', params.handler)
+  if (params.limit != null) search.set('limit', String(params.limit))
+  const query = search.toString()
+  return request<OpsCaseListResponse>(`/api/ops/cases${query ? `?${query}` : ''}`)
+}
+
+export function getOpsCaseStats(month: string) {
+  const search = new URLSearchParams({ month })
+  return request<OpsCaseStatsResponse>(`/api/ops/cases/stats?${search.toString()}`)
+}
+
+export async function exportOpsCases(month: string): Promise<Blob> {
+  const search = new URLSearchParams({ month })
+  const response = await fetch(`${API_BASE_URL}/api/ops/cases/export?${search.toString()}`)
+  if (!response.ok) {
+    const message = await response.text()
+    throw new Error(message || `Request failed: ${response.status}`)
+  }
+  return response.blob()
 }

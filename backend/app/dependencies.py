@@ -6,6 +6,7 @@ from app.core.config import get_settings
 from app.services.jira_service import JiraService
 from app.services.kpi_agent import build_kpi_agent_runner
 from app.services.kpi_service import KpiService
+from app.services.ops_case_service import OpsCaseService
 
 
 @lru_cache
@@ -33,3 +34,8 @@ def get_kpi_service() -> KpiService:
         prefer_cursor=settings.kpi_prefer_cursor_agent,
     )
     return KpiService(jira=get_jira_service(), agent=agent)
+
+
+@lru_cache
+def get_ops_case_service() -> OpsCaseService:
+    return OpsCaseService()

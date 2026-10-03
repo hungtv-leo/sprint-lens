@@ -1,6 +1,7 @@
 import {
   AppstoreOutlined,
   BarChartOutlined,
+  CustomerServiceOutlined,
   FileExcelOutlined,
   MenuOutlined,
   MoonOutlined,
@@ -19,6 +20,7 @@ const { useBreakpoint } = Grid
 
 const OVERVIEW_KEY = 'overview'
 const KPI_KEY = 'kpi-module'
+const OPS_KEY = 'ops-module'
 const SIDEBAR_WIDTH = 260
 
 const navigation: MenuProps['items'] = [
@@ -36,6 +38,14 @@ const navigation: MenuProps['items'] = [
     label: 'KPI',
     icon: <FileExcelOutlined />,
     children: [{ key: '/kpi', label: 'Tính toán & Xuất', icon: <FileExcelOutlined /> }],
+  },
+  {
+    key: OPS_KEY,
+    label: 'Vận hành',
+    icon: <CustomerServiceOutlined />,
+    children: [
+      { key: '/ops/cases', label: 'Ghi nhận case', icon: <CustomerServiceOutlined /> },
+    ],
   },
 ]
 
@@ -79,10 +89,10 @@ function NavMenu({ onNavigate }: { onNavigate?: () => void }) {
     <Menu
       mode="inline"
       selectedKeys={[location.pathname]}
-      defaultOpenKeys={[OVERVIEW_KEY, KPI_KEY]}
+      defaultOpenKeys={[OVERVIEW_KEY, KPI_KEY, OPS_KEY]}
       items={navigation}
       onClick={({ key }) => {
-        if (key === OVERVIEW_KEY || key === KPI_KEY) return
+        if (key === OVERVIEW_KEY || key === KPI_KEY || key === OPS_KEY) return
         navigate(key)
         onNavigate?.()
       }}

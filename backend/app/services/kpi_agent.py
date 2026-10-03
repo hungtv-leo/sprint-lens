@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from abc import ABC, abstractmethod
+from calendar import monthrange
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -18,10 +19,25 @@ from app.schemas.kpi import (
 )
 
 SHEET_DEVELOPER = "KPI Developer Demo"
+SHEET_LEAD_DEVELOPER = "KPI Lead Developer Demo"
 
 ROLE_SKILL_DIRS: dict[str, str] = {
     "developer": "kpi-developer",
+    "lead_developer": "kpi-developer",
 }
+
+ROLE_SHEETS: dict[str, str] = {
+    "developer": SHEET_DEVELOPER,
+    "lead_developer": SHEET_LEAD_DEVELOPER,
+}
+
+
+def sheet_for_role(role: str) -> str:
+    sheet = ROLE_SHEETS.get(role)
+    if not sheet:
+        raise HTTPException(status_code=400, detail=f"Role không được hỗ trợ: {role}")
+    return sheet
+
 
 CANCEL_KEYWORDS = ("cancel", "hủy", "huy", "won't", "wont", "withdrawn", "obsolete")
 
@@ -89,6 +105,21 @@ def completion_date_of(issue: Any) -> tuple[date | None, str]:
     return None, "none"
 
 
+def _period_month_bounds(payload: KpiAgentPayload) -> tuple[date, date] | None:
+    if payload.period.get("type") != "month":
+        return None
+    month = payload.period.get("month")
+    if not month or len(month) != 7 or month[4] != "-":
+        return None
+    year_s, month_s = month.split("-")
+    try:
+        year = int(year_s)
+        month_num = int(month_s)
+        return date(year, month_num, 1), date(year, month_num, monthrange(year, month_num)[1])
+    except ValueError:
+        return None
+
+
 def commitment_rate_to_score(rate: float | None) -> float | str:
     """Excel Commitment Achievement bands (thang 10)."""
     if rate is None:
@@ -132,16 +163,13 @@ def throughput_rate_to_score(rate: float | None) -> float | str:
     return 7.0
 
 
-# Backward-compatible alias used by older call sites / tests.
-def rate_to_score(rate: float | None) -> float | str:
-    return commitment_rate_to_score(rate)
-
 def compute_developer_kpi(payload: KpiAgentPayload) -> KpiAgentResult:
     """Apply kpi-developer skill rules to the issue dataset."""
     evidence: list[KpiEvidenceItem] = []
     notes: list[str] = []
     trace: list[str] = []
     issues_by_key = {issue.key.upper(): issue for issue in payload.issues}
+    month_bounds = _period_month_bounds(payload)
 
     committed_issues = []
     completed_issues = []
@@ -199,7 +227,19 @@ def compute_developer_kpi(payload: KpiAgentPayload) -> KpiAgentResult:
             committed_issues.append(issue)
 
     for issue in committed_issues:
-        if issue.status_category == "done":
+        completed_in_period = issue.status_category == "done"
+        if completed_in_period and month_bounds is not None:
+            completed_on, completed_source = completion_date_of(issue)
+            month_start, month_end = month_bounds
+            completed_in_period = bool(
+                completed_on and month_start <= completed_on <= month_end
+            )
+            if issue.status_category == "done" and not completed_in_period:
+                notes.append(
+                    f"{issue.key}: đã Done nhưng hoàn thành ngoài tháng đang tính "
+                    f"({completed_source}) — tính như chưa hoàn thành cho KPI tháng."
+                )
+        if completed_in_period:
             completed_issues.append(issue)
             evidence.append(KpiEvidenceItem(key=issue.key, bucket="completed", note=issue.status_name))
         else:
@@ -209,7 +249,7 @@ def compute_developer_kpi(payload: KpiAgentPayload) -> KpiAgentResult:
     committed = len(committed_issues)
     completed = len(completed_issues)
     incomplete = len(incomplete_issues)
-    commitment_rate = (completed / committed) if committed else 0.0
+    commitment_rate = (completed / committed) if committed else None
     trace.append(f"Cam kết: {completed}/{committed} issue hoàn thành.")
 
     plan_by_key = {item.issue_key.upper(): item for item in planned_items}
@@ -342,34 +382,35 @@ def compute_developer_kpi(payload: KpiAgentPayload) -> KpiAgentResult:
                 f"(đã loại khỏi Thông lượng): {preview}{more}."
             )
 
-    j5 = round(commitment_rate, 4)
+    j5: float | str = round(commitment_rate, 4) if commitment_rate is not None else "x"
     k5 = commitment_rate_to_score(commitment_rate)
     j6: float | str = round(schedule_rate, 4) if schedule_rate is not None else "x"
     k6 = schedule_rate_to_score(schedule_rate)
     j7: float | str = round(throughput_rate, 4) if throughput_rate is not None else "x"
     k7 = throughput_rate_to_score(throughput_rate)
 
+    sheet = sheet_for_role(payload.role)
     cell_updates = [
-        KpiCellUpdate(sheet=SHEET_DEVELOPER, cell="H5", value=completed),
-        KpiCellUpdate(sheet=SHEET_DEVELOPER, cell="I5", value=committed),
-        KpiCellUpdate(sheet=SHEET_DEVELOPER, cell="J5", value=j5),
-        KpiCellUpdate(sheet=SHEET_DEVELOPER, cell="K5", value=k5),
-        KpiCellUpdate(sheet=SHEET_DEVELOPER, cell="H6", value=on_time_completed),
-        KpiCellUpdate(sheet=SHEET_DEVELOPER, cell="I6", value=on_time_eligible),
-        KpiCellUpdate(sheet=SHEET_DEVELOPER, cell="J6", value=j6),
-        KpiCellUpdate(sheet=SHEET_DEVELOPER, cell="K6", value=k6),
+        KpiCellUpdate(sheet=sheet, cell="H5", value=completed),
+        KpiCellUpdate(sheet=sheet, cell="I5", value=committed),
+        KpiCellUpdate(sheet=sheet, cell="J5", value=j5),
+        KpiCellUpdate(sheet=sheet, cell="K5", value=k5),
+        KpiCellUpdate(sheet=sheet, cell="H6", value=on_time_completed),
+        KpiCellUpdate(sheet=sheet, cell="I6", value=on_time_eligible),
+        KpiCellUpdate(sheet=sheet, cell="J6", value=j6),
+        KpiCellUpdate(sheet=sheet, cell="K6", value=k6),
         KpiCellUpdate(
-            sheet=SHEET_DEVELOPER,
+            sheet=sheet,
             cell="H7",
             value=throughput_completed_scope_out if throughput_completed_scope_out is not None else "x",
         ),
         KpiCellUpdate(
-            sheet=SHEET_DEVELOPER,
+            sheet=sheet,
             cell="I7",
             value=throughput_committed_scope_out if throughput_committed_scope_out is not None else "x",
         ),
-        KpiCellUpdate(sheet=SHEET_DEVELOPER, cell="J7", value=j7),
-        KpiCellUpdate(sheet=SHEET_DEVELOPER, cell="K7", value=k7),
+        KpiCellUpdate(sheet=sheet, cell="J7", value=j7),
+        KpiCellUpdate(sheet=sheet, cell="K7", value=k7),
     ]
 
     return KpiAgentResult(
@@ -379,7 +420,7 @@ def compute_developer_kpi(payload: KpiAgentPayload) -> KpiAgentResult:
             incomplete=incomplete,
             on_time_completed=on_time_completed,
             on_time_eligible=on_time_eligible,
-            commitment_rate=round(commitment_rate, 4),
+            commitment_rate=round(commitment_rate, 4) if commitment_rate is not None else None,
             schedule_rate=round(schedule_rate, 4) if schedule_rate is not None else None,
             schedule_source=schedule_source,
             schedule_coverage=round(schedule_coverage, 4) if schedule_coverage is not None else None,
@@ -432,7 +473,7 @@ class LocalSkillAgentRunner(KpiAgentRunner):
     async def run(self, payload: KpiAgentPayload) -> KpiAgentResult:
         # Ensure skill exists / is readable for this role.
         load_skill_text(payload.role)
-        if payload.role == "developer":
+        if payload.role in {"developer", "lead_developer"}:
             return compute_developer_kpi(payload)
         raise HTTPException(status_code=400, detail=f"Chưa có skill tính toán cho role: {payload.role}")
 

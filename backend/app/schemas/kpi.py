@@ -12,7 +12,7 @@ class KpiPeriod(BaseModel):
 
 
 class KpiRequest(BaseModel):
-    role: Literal["developer"] = "developer"
+    role: Literal["developer", "lead_developer"] = "developer"
     period: KpiPeriod
     assignee: str = Field(min_length=1)
     projects: list[str] = Field(min_length=1)
@@ -71,7 +71,7 @@ class KpiStats(BaseModel):
     incomplete: int
     on_time_completed: int
     on_time_eligible: int
-    commitment_rate: float
+    commitment_rate: float | None = None
     schedule_rate: float | None = None
     schedule_source: Literal["jira_due_date", "plan_due_date", "mixed", "none"] = "none"
     schedule_coverage: float | None = None

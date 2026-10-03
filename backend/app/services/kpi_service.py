@@ -15,7 +15,6 @@ from openpyxl.workbook import Workbook
 from app.schemas.jira import IssuesResponse, JiraIssue
 from app.schemas.kpi import (
     KpiAgentPayload,
-    KpiAgentResult,
     KpiCalculateResponse,
     KpiIssuePayload,
     KpiPlanItem,
@@ -24,7 +23,7 @@ from app.schemas.kpi import (
     KpiRequest,
 )
 from app.services.jira_service import JiraService
-from app.services.kpi_agent import KpiAgentRunner, SHEET_DEVELOPER, completion_date_of
+from app.services.kpi_agent import KpiAgentRunner, completion_date_of, sheet_for_role
 
 PLAN_SHEET_DEVELOPER = "Kế hoạch Developer"
 PLAN_SHEET_DEVELOPER_LEGACY = "Developer Plan"
@@ -44,7 +43,13 @@ PLAN_HEADER_ALIASES = {
     "ghi chu / ly do loai tru": "exclusion_reason",
 }
 ISSUE_KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]+-\d+$")
-PLAIN_NUMBER_CELLS = {"H5", "I5", "H6", "I6", "H7", "I7"}
+PLAIN_NUMBER_CELLS = {"H5", "I5", "H6", "I6", "H7", "I7", "L5", "M5", "L6", "M6", "L7", "M7"}
+# Employee cols H–K → manager cols L–O (same metrics; CBQL reviews later).
+EMPLOYEE_TO_MANAGER_COLS = (("H", "L"), ("I", "M"), ("J", "N"), ("K", "O"))
+EXPORT_COMMON_SHEETS = {
+    PLAN_SHEET_DEVELOPER,
+    "Log tính KPI",
+}
 WARNING_CODE_LABELS = {
     "jira_truncated": "Dữ liệu Jira bị cắt ngưỡng",
     "missing_in_jira": "Thiếu trên Jira",
@@ -102,6 +107,17 @@ class KpiService:
             return True
         issue_type = (issue.issue_type or "").strip().lower()
         return issue_type in {"sub-task", "subtask", "nhiệm vụ phụ", "sub task"}
+
+    def _is_in_progress_issue(self, issue: JiraIssue) -> bool:
+        status_name = " ".join((issue.status_name or "").strip().lower().split())
+        return status_name in {
+            "in progress",
+            "in-progress",
+            "đang làm",
+            "dang lam",
+            "đang thực hiện",
+            "dang thuc hien",
+        }
 
     def _parse_flexible_date(self, value: object) -> date | None:
         """Parse plan due dates from Excel (datetime) or common text formats."""
@@ -230,6 +246,41 @@ class KpiService:
             for cell in row:
                 worksheet[cell.coordinate] = cell.value
         worksheet.freeze_panes = source_sheet.freeze_panes
+
+    def _export_sheets_to_keep(self, role: str) -> set[str]:
+        return {sheet_for_role(role), *EXPORT_COMMON_SHEETS}
+
+    def _prune_export_sheets(self, workbook: Workbook, role: str) -> None:
+        """Keep only the role KPI sheet, plan, criteria, and calculation log."""
+        keep = {name for name in self._export_sheets_to_keep(role) if name in workbook.sheetnames}
+        if not keep:
+            return
+        for sheet_name in list(workbook.sheetnames):
+            if sheet_name not in keep:
+                del workbook[sheet_name]
+
+    @staticmethod
+    def _is_excel_formula(value: object) -> bool:
+        return isinstance(value, str) and value.startswith("=")
+
+    def _mirror_employee_scores_to_manager(self, workbook: Workbook, role: str) -> None:
+        """Seed CBQL columns from employee scores so manager starts from the same numbers."""
+        sheet_name = sheet_for_role(role)
+        if sheet_name not in workbook.sheetnames:
+            return
+        worksheet = workbook[sheet_name]
+        # Skip header labels (rows 1–2); keep structural formulas on either side intact.
+        for row in range(3, worksheet.max_row + 1):
+            for employee_col, manager_col in EMPLOYEE_TO_MANAGER_COLS:
+                employee_cell = worksheet[f"{employee_col}{row}"]
+                manager_cell = worksheet[f"{manager_col}{row}"]
+                if self._is_excel_formula(employee_cell.value) or self._is_excel_formula(manager_cell.value):
+                    continue
+                if employee_cell.value is None and manager_cell.value is None:
+                    continue
+                manager_cell.value = employee_cell.value
+                if employee_cell.number_format:
+                    manager_cell.number_format = employee_cell.number_format
 
     def _write_log_sheet(self, workbook: Workbook, calculated: KpiCalculateResponse) -> None:
         sheet_name = "Log tính KPI"
@@ -626,6 +677,17 @@ class KpiService:
                 )
                 raise HTTPException(status_code=400, detail=detail)
 
+            if not plan_items:
+                raise HTTPException(
+                    status_code=400,
+                    detail="File kế hoạch không có dòng hợp lệ để tính KPI.",
+                )
+            if not any(item.plan_type == "committed" for item in plan_items):
+                raise HTTPException(
+                    status_code=400,
+                    detail="File kế hoạch không có task Cam kết hợp lệ để tính KPI.",
+                )
+
             issue_keys = [item.issue_key for item in plan_items]
             issue_response = await self.jira.get_issues(
                 request.projects,
@@ -669,7 +731,6 @@ class KpiService:
 
             if request.period.type == "month" and request.period.month:
                 month_start, month_end = self._month_bounds(request.period.month)
-                filtered_issues: list[JiraIssue] = []
                 for issue in issues:
                     if issue.status_category == "done":
                         activity_on, activity_source = completion_date_of(issue)
@@ -679,7 +740,6 @@ class KpiService:
                         activity_source = "updated"
                         activity_label = "cập nhật"
                     if activity_on and month_start <= activity_on <= month_end:
-                        filtered_issues.append(issue)
                         continue
                     validation_issues.append(
                         KpiPlanValidationIssue(
@@ -689,11 +749,10 @@ class KpiService:
                             code="outside_requested_month",
                             message=(
                                 f"Issue không có {activity_label} thuộc tháng đang tính "
-                                f"(nguồn={activity_source}), đã loại khỏi KPI tháng."
+                                f"(nguồn={activity_source}). Vẫn giữ trong mẫu số KPI tháng để tránh lệch số liệu."
                             ),
                         )
                     )
-                issues = filtered_issues
 
             assignee_mismatches = 0
             for issue in issues:
@@ -719,7 +778,9 @@ class KpiService:
             unplanned_issues = [
                 issue
                 for issue in period_issues
-                if issue.key.upper() not in planned_key_set and not self._is_subtask_issue(issue)
+                if issue.key.upper() not in planned_key_set
+                and not self._is_subtask_issue(issue)
+                and self._is_in_progress_issue(issue)
             ]
             for issue in unplanned_issues:
                 validation_issues.append(
@@ -728,11 +789,11 @@ class KpiService:
                         level="warning",
                         blocking=False,
                         code="unplanned_issue",
-                        message="Có trên Jira trong kỳ nhưng không có trong kế hoạch tháng.",
+                        message="Đang In Progress trên Jira nhưng không có trong kế hoạch tháng.",
                     )
                 )
 
-            plan_summary.matched_issue_count = len(issues)
+            plan_summary.matched_issue_count = len(found_key_set)
             plan_summary.missing_in_jira_count = len(missing_in_jira)
             plan_summary.assignee_mismatch_count = assignee_mismatches
             plan_summary.unplanned_issue_count = len(unplanned_issues)
@@ -784,7 +845,7 @@ class KpiService:
         if workbook_bytes:
             self._copy_plan_sheet(self._load_workbook(workbook_bytes), workbook)
         for update in calculated.result.cell_updates:
-            sheet_name = update.sheet or SHEET_DEVELOPER
+            sheet_name = update.sheet or sheet_for_role(calculated.role)
             if sheet_name not in workbook.sheetnames:
                 raise HTTPException(
                     status_code=500,
@@ -795,7 +856,9 @@ class KpiService:
             if update.cell in PLAIN_NUMBER_CELLS and isinstance(update.value, (int, float)):
                 cell.number_format = "0.##"
 
+        self._mirror_employee_scores_to_manager(workbook, calculated.role)
         self._write_log_sheet(workbook, calculated)
+        self._prune_export_sheets(workbook, calculated.role)
 
         buffer = BytesIO()
         workbook.save(buffer)
