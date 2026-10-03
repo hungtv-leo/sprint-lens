@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.boards import router as boards_router
 from app.api.issues import router as issues_router
 from app.api.kpi import router as kpi_router
 from app.api.ops import router as ops_router
@@ -27,6 +28,7 @@ async def healthcheck():
 
 
 app.include_router(projects_router)
+app.include_router(boards_router)
 app.include_router(issues_router)
 app.include_router(statuses_router)
 app.include_router(sprints_router)

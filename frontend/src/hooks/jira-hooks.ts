@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 
 import {
   getAppConfig,
+  getBoards,
   getIssues,
   getJiraHealth,
   getProjects,
@@ -38,6 +39,15 @@ export function useSprints(projects: string[]) {
   })
 }
 
+export function useBoards(projects: string[]) {
+  return useQuery({
+    queryKey: ['boards', projects],
+    queryFn: () => getBoards(projects),
+    enabled: projects.length > 0,
+    staleTime: 60_000,
+  })
+}
+
 export function useUsers(projects: string[], q?: string) {
   return useQuery({
     queryKey: ['users', projects, q ?? ''],
@@ -50,6 +60,7 @@ export function useUsers(projects: string[], q?: string) {
 export function useIssues(params: {
   projects: string[]
   sprint?: string
+  board?: string
   assignee?: string
   q?: string
 }) {
@@ -64,6 +75,7 @@ export function useIssues(params: {
 export function useSummary(params: {
   projects: string[]
   sprint?: string
+  board?: string
   assignee?: string
   q?: string
 }) {

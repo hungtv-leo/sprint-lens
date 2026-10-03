@@ -1,6 +1,7 @@
 import type {
   AppConfig,
   IssuesResponse,
+  JiraBoard,
   JiraHealth,
   JiraProject,
   JiraSprint,
@@ -43,6 +44,11 @@ export function getSprints(projects: string[]) {
   return request<JiraSprint[]>(`/api/sprints?${search.toString()}`)
 }
 
+export function getBoards(projects: string[]) {
+  const search = new URLSearchParams({ projects: projects.join(',') })
+  return request<JiraBoard[]>(`/api/boards?${search.toString()}`)
+}
+
 export function getUsers(params: { projects: string[]; q?: string }) {
   const search = new URLSearchParams({
     projects: params.projects.join(','),
@@ -54,13 +60,15 @@ export function getUsers(params: { projects: string[]; q?: string }) {
 export function getIssues(params: {
   projects: string[]
   sprint?: string
+  board?: string
   assignee?: string
   q?: string
 }) {
   const search = new URLSearchParams({
     projects: params.projects.join(','),
   })
-  if (params.sprint) search.set('sprint', params.sprint)
+  if (params.board) search.set('board', params.board)
+  else if (params.sprint) search.set('sprint', params.sprint)
   if (params.assignee) search.set('assignee', params.assignee)
   if (params.q) search.set('q', params.q)
 
@@ -70,13 +78,15 @@ export function getIssues(params: {
 export function getSummary(params: {
   projects: string[]
   sprint?: string
+  board?: string
   assignee?: string
   q?: string
 }) {
   const search = new URLSearchParams({
     projects: params.projects.join(','),
   })
-  if (params.sprint) search.set('sprint', params.sprint)
+  if (params.board) search.set('board', params.board)
+  else if (params.sprint) search.set('sprint', params.sprint)
   if (params.assignee) search.set('assignee', params.assignee)
   if (params.q) search.set('q', params.q)
 

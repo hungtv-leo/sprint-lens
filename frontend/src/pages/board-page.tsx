@@ -7,6 +7,7 @@ import { ProjectFilters } from '../components/layout/project-filters'
 import { TopBar } from '../components/layout/top-bar'
 import {
   useAppConfig,
+  useBoards,
   useIssues,
   useProjects,
   useSprints,
@@ -20,6 +21,7 @@ export function BoardPage() {
     [],
   )
   const [selectedSprint, setSelectedSprint] = useLocalStorage<string>('sprint-lens.sprint', '')
+  const [selectedBoard, setSelectedBoard] = useLocalStorage<string>('sprint-lens.board', '')
   const [assignee, setAssignee] = useLocalStorage<string>('sprint-lens.assignee', '')
   const [query, setQuery] = useState('')
   const [defaultsApplied, setDefaultsApplied] = useState(false)
@@ -27,10 +29,12 @@ export function BoardPage() {
   const projectsQuery = useProjects()
   const configQuery = useAppConfig()
   const sprintsQuery = useSprints(selectedProjects)
+  const boardsQuery = useBoards(selectedProjects)
   const statusesQuery = useStatuses(selectedProjects)
   const issuesQuery = useIssues({
     projects: selectedProjects,
-    sprint: selectedSprint,
+    sprint: selectedBoard ? undefined : selectedSprint,
+    board: selectedBoard || undefined,
     assignee,
     q: query.trim() || undefined,
   })
@@ -66,7 +70,10 @@ export function BoardPage() {
   const statuses = statusesQuery.data?.length ? statusesQuery.data : fallbackStatuses
   const loading =
     selectedProjects.length > 0 &&
-    (issuesQuery.isPending || statusesQuery.isPending || sprintsQuery.isPending)
+    (issuesQuery.isPending ||
+      statusesQuery.isPending ||
+      sprintsQuery.isPending ||
+      boardsQuery.isPending)
   const truncated = Boolean(issuesQuery.data?.truncated)
 
   return (
@@ -78,6 +85,7 @@ export function BoardPage() {
           await Promise.all([
             projectsQuery.refetch(),
             sprintsQuery.refetch(),
+            boardsQuery.refetch(),
             statusesQuery.refetch(),
             issuesQuery.refetch(),
           ])
@@ -93,6 +101,9 @@ export function BoardPage() {
           sprint={selectedSprint}
           onSprintChange={setSelectedSprint}
           sprints={sprintsQuery.data}
+          board={selectedBoard}
+          onBoardChange={setSelectedBoard}
+          boards={boardsQuery.data}
           assignee={assignee}
           onAssigneeChange={setAssignee}
           query={query}

@@ -25,6 +25,13 @@ class JiraSprint(BaseModel):
     end_date: str | None = Field(default=None, alias="endDate")
 
 
+class JiraBoard(BaseModel):
+    id: int
+    name: str
+    type: str
+    project_key: str | None = None
+
+
 class JiraAssignee(BaseModel):
     name: str | None = None
     display_name: str = "Chưa gán"

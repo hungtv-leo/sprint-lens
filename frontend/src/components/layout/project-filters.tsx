@@ -3,7 +3,7 @@ import { Button, Card, Col, Grid, Input, Row, Select, Space, Typography } from '
 
 import { useUsers } from '../../hooks/jira-hooks'
 import { userFilterValue } from '../../lib/api'
-import type { JiraProject, JiraSprint } from '../../lib/types'
+import type { JiraBoard, JiraProject, JiraSprint } from '../../lib/types'
 
 const { useBreakpoint } = Grid
 
@@ -14,6 +14,9 @@ type FiltersProps = {
   onProjectsChange: (projects: string[]) => void
   onSprintChange: (value: string) => void
   sprints?: JiraSprint[]
+  board?: string
+  onBoardChange?: (value: string) => void
+  boards?: JiraBoard[]
   assignee: string
   onAssigneeChange: (value: string) => void
   query?: string
@@ -26,6 +29,11 @@ const sprintStateLabel: Record<string, string> = {
   future: 'sắp tới',
 }
 
+const boardTypeLabel: Record<string, string> = {
+  scrum: 'scrum',
+  kanban: 'kanban',
+}
+
 export function ProjectFilters({
   projects,
   selectedProjects,
@@ -33,6 +41,9 @@ export function ProjectFilters({
   sprint,
   onSprintChange,
   sprints = [],
+  board = '',
+  onBoardChange,
+  boards = [],
   assignee,
   onAssigneeChange,
   query = '',
@@ -41,9 +52,11 @@ export function ProjectFilters({
   const screens = useBreakpoint()
   const isMobile = !screens.md
   const usersQuery = useUsers(selectedProjects)
+  const boardSelected = Boolean(board)
   const hasFilters =
     selectedProjects.length > 0 ||
     Boolean(sprint) ||
+    boardSelected ||
     Boolean(assignee) ||
     Boolean(query.trim())
 
@@ -70,6 +83,7 @@ export function ProjectFilters({
               onClick={() => {
                 onProjectsChange([])
                 onSprintChange('')
+                onBoardChange?.('')
                 onAssigneeChange('')
                 onQueryChange?.('')
               }}
@@ -82,7 +96,8 @@ export function ProjectFilters({
     >
       {!isMobile ? (
         <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
-          Chọn project, sprint và điều kiện cần để tập trung vào phần quan trọng.
+          Chọn project, board (ví dụ Ad-hoc tasks), sprint và điều kiện cần để tập trung vào phần
+          quan trọng.
         </Typography.Paragraph>
       ) : null}
 
@@ -99,6 +114,7 @@ export function ProjectFilters({
             onChange={(projectsValue) => {
               onProjectsChange(projectsValue)
               onAssigneeChange('')
+              onBoardChange?.('')
             }}
             options={projects.map((project) => ({
               value: project.key,
@@ -109,13 +125,38 @@ export function ProjectFilters({
           />
         </Col>
 
+        {onBoardChange ? (
+          <Col xs={24} sm={12} md={onQueryChange ? 5 : 7}>
+            <Typography.Text type="secondary">Board</Typography.Text>
+            <Select
+              allowClear
+              style={{ width: '100%', marginTop: 8 }}
+              placeholder="Theo sprint (mặc định)"
+              value={board || undefined}
+              onChange={(value) => {
+                onBoardChange(value ?? '')
+                if (value) onSprintChange('')
+              }}
+              options={[
+                { value: '', label: 'Theo sprint (mặc định)' },
+                ...boards.map((item) => ({
+                  value: String(item.id),
+                  label: `${item.name} (${boardTypeLabel[item.type] ?? item.type})`,
+                })),
+              ]}
+              getPopupContainer={(node) => node.parentElement ?? document.body}
+            />
+          </Col>
+        ) : null}
+
         <Col xs={24} sm={12} md={onQueryChange ? 5 : 7}>
           <Typography.Text type="secondary">Sprint</Typography.Text>
           <Select
             allowClear
+            disabled={boardSelected}
             style={{ width: '100%', marginTop: 8 }}
-            placeholder="Tất cả sprint"
-            value={sprint || undefined}
+            placeholder={boardSelected ? 'Đang lọc theo board' : 'Tất cả sprint'}
+            value={boardSelected ? undefined : sprint || undefined}
             onChange={(value) => onSprintChange(value ?? '')}
             options={[
               { value: '', label: 'Tất cả sprint' },

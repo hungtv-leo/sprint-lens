@@ -13,6 +13,7 @@ from app.schemas.jira import (
     AssigneeSummaryItem,
     IssuesResponse,
     JiraAssignee,
+    JiraBoard,
     JiraHealthResponse,
     JiraIssue,
     JiraProject,
@@ -130,14 +131,14 @@ class JiraService:
         )
         return self.cache.set(cache_key, statuses)
 
-    async def get_sprints(self, project_key: str) -> list[JiraSprint]:
-        cache_key = f"sprints:{project_key}"
+    async def get_boards(self, project_key: str) -> list[JiraBoard]:
+        cache_key = f"boards:{project_key}"
         cached = self.cache.get(cache_key)
         if cached is not None:
             return cached
 
         try:
-            boards = await self.client.get(
+            data = await self.client.get(
                 "/rest/agile/1.0/board",
                 params={"projectKeyOrId": project_key},
             )
@@ -145,19 +146,58 @@ class JiraService:
             # Project may not have Agile boards, or token lacks board permission.
             return self.cache.set(cache_key, [])
 
-        board_values = boards.get("values", [])
+        boards = [
+            JiraBoard(
+                id=int(item["id"]),
+                name=str(item.get("name") or f"Board {item['id']}"),
+                type=str(item.get("type") or "unknown"),
+                project_key=(item.get("location") or {}).get("projectKey") or project_key,
+            )
+            for item in data.get("values", [])
+            if item.get("id") is not None
+        ]
+        boards.sort(key=lambda item: (item.type != "scrum", item.name.lower()))
+        return self.cache.set(cache_key, boards)
+
+    async def get_boards_for_projects(self, project_keys: list[str]) -> list[JiraBoard]:
+        if not project_keys:
+            raise HTTPException(status_code=400, detail="Cần ít nhất một project key.")
+
+        cache_key = f"boards:multi:{','.join(project_keys)}"
+        cached = self.cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        merged: dict[int, JiraBoard] = {}
+        for project_key in project_keys:
+            for board in await self.get_boards(project_key):
+                merged[board.id] = board
+
+        boards = sorted(
+            merged.values(),
+            key=lambda item: (item.type != "scrum", item.name.lower()),
+        )
+        return self.cache.set(cache_key, boards)
+
+    async def get_sprints(self, project_key: str) -> list[JiraSprint]:
+        cache_key = f"sprints:{project_key}"
+        cached = self.cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        board_values = await self.get_boards(project_key)
         if not board_values:
             return self.cache.set(cache_key, [])
 
         # Sprint API only works on Scrum boards. Kanban boards return 400.
-        scrum_boards = [board for board in board_values if board.get("type") == "scrum"]
+        scrum_boards = [board for board in board_values if board.type == "scrum"]
         candidate_boards = scrum_boards or board_values
 
         sprints: dict[int, JiraSprint] = {}
         for board in candidate_boards[:5]:
             try:
                 data = await self.client.get(
-                    f"/rest/agile/1.0/board/{board['id']}/sprint",
+                    f"/rest/agile/1.0/board/{board.id}/sprint",
                     params={"maxResults": 50},
                 )
             except httpx.HTTPStatusError:
@@ -277,6 +317,84 @@ class JiraService:
             active=bool(item.get("active", True)),
         )
 
+    def _issue_fields(self) -> list[str]:
+        return [
+            "summary",
+            "status",
+            "priority",
+            "assignee",
+            "updated",
+            "resolutiondate",
+            "statuscategorychangedate",
+            "duedate",
+            "issuetype",
+            "project",
+            self.sprint_custom_field,
+            "customfield_10002",
+        ]
+
+    async def get_board_issues(
+        self,
+        board_id: int,
+        assignee: str | None = None,
+        query: str | None = None,
+    ) -> IssuesResponse:
+        cache_key = f"board-issues:{board_id}:{assignee}:{query}"
+        cached = self.cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        jql = self._build_board_jql(assignee=assignee, query=query)
+        issues: list[JiraIssue] = []
+        start_at = 0
+        total = 0
+
+        while True:
+            page_size = min(ISSUE_PAGE_SIZE, ISSUE_HARD_CAP - len(issues))
+            if page_size <= 0:
+                break
+
+            params: dict[str, Any] = {
+                "startAt": start_at,
+                "maxResults": page_size,
+                "fields": ",".join(self._issue_fields()),
+            }
+            if jql:
+                params["jql"] = jql
+
+            try:
+                data = await self.client.get(
+                    f"/rest/agile/1.0/board/{board_id}/issue",
+                    params=params,
+                )
+            except httpx.HTTPStatusError as exc:
+                detail = "Không truy vấn được issues của board."
+                try:
+                    body = exc.response.json()
+                    messages = body.get("errorMessages") or []
+                    if messages:
+                        detail = "; ".join(str(item) for item in messages)
+                except Exception:  # noqa: BLE001
+                    pass
+                raise HTTPException(status_code=exc.response.status_code, detail=detail) from exc
+
+            total = int(data.get("total") or 0)
+            page_issues = [self._normalize_issue(item) for item in data.get("issues", [])]
+            issues.extend(page_issues)
+
+            start_at += len(page_issues)
+            if not page_issues or start_at >= total or len(issues) >= ISSUE_HARD_CAP:
+                break
+
+        truncated = total > len(issues)
+        result = IssuesResponse(
+            issues=issues,
+            total=total,
+            returned=len(issues),
+            truncated=truncated,
+        )
+        return self.cache.set(cache_key, result)
+
     async def get_issues(
         self,
         project_keys: list[str],
@@ -285,19 +403,30 @@ class JiraService:
         query: str | None = None,
         updated_from: str | None = None,
         updated_to: str | None = None,
+        board: str | None = None,
     ) -> IssuesResponse:
+        if not project_keys:
+            raise HTTPException(
+                status_code=400,
+                detail="Cần ít nhất một project key.",
+            )
+
+        if board:
+            board_id = board.strip()
+            if not board_id.isdigit():
+                raise HTTPException(status_code=400, detail="board phải là id số.")
+            return await self.get_board_issues(
+                board_id=int(board_id),
+                assignee=assignee,
+                query=query,
+            )
+
         cache_key = (
             f"issues:{','.join(project_keys)}:{sprint}:{assignee}:{query}:{updated_from}:{updated_to}"
         )
         cached = self.cache.get(cache_key)
         if cached is not None:
             return cached
-
-        if not project_keys:
-            raise HTTPException(
-                status_code=400,
-                detail="Cần ít nhất một project key.",
-            )
 
         jql = self._build_jql(
             project_keys,
@@ -321,20 +450,7 @@ class JiraService:
                 "jql": jql,
                 "startAt": start_at,
                 "maxResults": page_size,
-                "fields": [
-                    "summary",
-                    "status",
-                    "priority",
-                    "assignee",
-                    "updated",
-                    "resolutiondate",
-                    "statuscategorychangedate",
-                    "duedate",
-                    "issuetype",
-                    "project",
-                    self.sprint_custom_field,
-                    "customfield_10002",
-                ],
+                "fields": self._issue_fields(),
             }
 
             try:
@@ -373,10 +489,12 @@ class JiraService:
         sprint: str | None = "active",
         assignee: str | None = None,
         query: str | None = None,
+        board: str | None = None,
     ) -> SummaryResponse:
         issues_response = await self.get_issues(
             project_keys,
             sprint=sprint,
+            board=board,
             assignee=assignee,
             query=query,
         )
@@ -455,6 +573,28 @@ class JiraService:
             story_points=story_points,
         )
 
+    def _build_query_clause(self, query: str) -> str:
+        # Jira rejects `key = "BE"` (not a valid issue key) with HTTP 400.
+        if query.startswith("__keys__:"):
+            return f"({query.removeprefix('__keys__:')})"
+        escaped = query.replace("\\", "\\\\").replace('"', '\\"')
+        if ISSUE_KEY_RE.fullmatch(query.strip()):
+            key = query.strip().upper().replace("\\", "\\\\").replace('"', '\\"')
+            return f'(key = "{key}" OR summary ~ "{escaped}")'
+        return f'summary ~ "{escaped}"'
+
+    def _build_board_jql(
+        self,
+        assignee: str | None,
+        query: str | None,
+    ) -> str | None:
+        clauses: list[str] = []
+        if assignee:
+            clauses.append(f'assignee = "{assignee}"')
+        if query:
+            clauses.append(self._build_query_clause(query))
+        return " AND ".join(clauses) if clauses else None
+
     def _build_jql(
         self,
         project_keys: list[str],
@@ -481,15 +621,9 @@ class JiraService:
             clauses.append(f'updated <= "{updated_to} 23:59"')
 
         if query:
-            # Jira rejects `key = "BE"` (not a valid issue key) with HTTP 400.
             if query.startswith("__keys__:"):
-                clauses.append(f"({query.removeprefix('__keys__:')})")
+                clauses.append(self._build_query_clause(query))
                 return " AND ".join(clauses) + " ORDER BY updated DESC"
-            escaped = query.replace("\\", "\\\\").replace('"', '\\"')
-            if ISSUE_KEY_RE.fullmatch(query.strip()):
-                key = query.strip().upper().replace("\\", "\\\\").replace('"', '\\"')
-                clauses.append(f'(key = "{key}" OR summary ~ "{escaped}")')
-            else:
-                clauses.append(f'summary ~ "{escaped}"')
+            clauses.append(self._build_query_clause(query))
 
         return " AND ".join(clauses) + " ORDER BY status ASC, priority DESC, updated DESC"

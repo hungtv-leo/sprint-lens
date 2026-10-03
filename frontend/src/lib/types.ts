@@ -20,6 +20,13 @@ export type JiraSprint = {
   end_date?: string | null
 }
 
+export type JiraBoard = {
+  id: number
+  name: string
+  type: string
+  project_key?: string | null
+}
+
 export type JiraIssue = {
   key: string
   summary: string
