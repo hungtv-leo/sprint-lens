@@ -17,6 +17,7 @@ import {
   useSummary,
 } from '../hooks/jira-hooks'
 import { useLocalStorage } from '../hooks/use-local-storage'
+import { statAccents } from '../theme/palette'
 
 export function DashboardPage() {
   const [selectedProjects, setSelectedProjects] = useLocalStorage<string[]>(
@@ -144,6 +145,7 @@ export function DashboardPage() {
                   label="Tổng task"
                   value={summary?.total ?? 0}
                   hint="Tổng số issue trong bộ lọc hiện tại"
+                  accent={statAccents.total}
                 />
               </Col>
               <Col xs={12} sm={12} xl={6}>
@@ -151,6 +153,7 @@ export function DashboardPage() {
                   label="Chưa bắt đầu"
                   value={stats.unstarted}
                   hint="Cần ưu tiên mở task hoặc giao việc"
+                  accent={statAccents.unstarted}
                 />
               </Col>
               <Col xs={12} sm={12} xl={6}>
@@ -158,6 +161,7 @@ export function DashboardPage() {
                   label="Đang testing"
                   value={stats.testing}
                   hint="Cần theo dõi sát để không trễ sprint"
+                  accent={statAccents.testing}
                 />
               </Col>
               <Col xs={12} sm={12} xl={6}>
@@ -165,6 +169,7 @@ export function DashboardPage() {
                   label="Đã xong"
                   value={stats.done}
                   hint="Số task đã vào nhóm hoàn thành"
+                  accent={statAccents.done}
                 />
               </Col>
             </Row>

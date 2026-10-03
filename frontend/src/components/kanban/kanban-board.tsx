@@ -1,7 +1,16 @@
-import { Badge, Card, Col, Empty, Grid, Row, Typography } from 'antd'
+import { Badge, Card, Col, Empty, Grid, Row, Typography, theme } from 'antd'
 
 import type { JiraIssue, JiraStatus } from '../../lib/types'
+import { palette } from '../../theme/palette'
 import { IssueCard } from './issue-card'
+
+function categoryAccent(categoryName: string) {
+  const value = categoryName.toLowerCase()
+  if (value.includes('done') || value.includes('complete')) return palette.success500
+  if (value.includes('progress') || value.includes('indeterminate')) return palette.aqua500
+  if (value.includes('new') || value.includes('todo')) return palette.gold500
+  return palette.primary500
+}
 
 const { useBreakpoint } = Grid
 
@@ -83,6 +92,9 @@ function KanbanColumn({
   column: ColumnData
   bodyHeight: number
 }) {
+  const { token } = theme.useToken()
+  const accent = categoryAccent(column.category_name)
+
   return (
     <Card
       size="small"
@@ -91,23 +103,28 @@ function KanbanColumn({
         height: '100%',
         display: 'flex',
         flexDirection: 'column',
+        borderTop: `3px solid ${accent}`,
       }}
       styles={{
+        header: {
+          background: `linear-gradient(180deg, ${accent}18 0%, transparent 100%)`,
+        },
         body: {
           height: bodyHeight,
           overflowY: 'auto',
           WebkitOverflowScrolling: 'touch',
+          background: token.colorBgContainer,
         },
       }}
       title={
         <div style={{ minWidth: 0 }}>
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          <Typography.Text style={{ fontSize: 12, color: accent, fontWeight: 600 }}>
             {column.category_name}
           </Typography.Text>
           <div style={{ wordBreak: 'break-word' }}>{column.name}</div>
         </div>
       }
-      extra={<Badge count={column.items.length} showZero color="blue" />}
+      extra={<Badge count={column.items.length} showZero color={accent} />}
     >
       {column.items.length === 0 ? (
         <div

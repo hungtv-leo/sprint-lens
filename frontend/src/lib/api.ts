@@ -15,6 +15,7 @@ import type {
   OpsCaseStatsResponse,
   OpsWorkType,
   SummaryResponse,
+  WeeklyReportResponse,
 } from './types'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8787'
@@ -193,4 +194,21 @@ export async function exportOpsCases(month: string): Promise<Blob> {
     throw new Error(message || `Request failed: ${response.status}`)
   }
   return response.blob()
+}
+
+export function getWeeklyReport(params: {
+  projects: string[]
+  assignees: string[]
+  date_from?: string
+  date_to?: string
+  adhoc_board?: number
+}) {
+  const search = new URLSearchParams({
+    projects: params.projects.join(','),
+    assignees: params.assignees.join(','),
+  })
+  if (params.date_from) search.set('date_from', params.date_from)
+  if (params.date_to) search.set('date_to', params.date_to)
+  if (params.adhoc_board != null) search.set('adhoc_board', String(params.adhoc_board))
+  return request<WeeklyReportResponse>(`/api/weekly-report?${search.toString()}`)
 }

@@ -30,11 +30,19 @@ export function TopBar({
       style={{
         padding: isMobile ? '16px' : '20px 24px',
         borderBottom: `1px solid ${token.colorBorderSecondary}`,
-        background: token.colorBgContainer,
+        background: `linear-gradient(105deg, ${token.colorBgContainer} 0%, ${token.colorPrimaryBg} 48%, ${token.colorInfoBg} 100%)`,
       }}
     >
       <div style={{ minWidth: 0, flex: 1 }}>
-        <Typography.Text type="secondary">Góc nhìn sprint</Typography.Text>
+        <Typography.Text
+          style={{
+            color: token.colorPrimary,
+            fontWeight: 600,
+            textShadow: `0 0 16px ${token.colorPrimaryBg}`,
+          }}
+        >
+          Góc nhìn sprint
+        </Typography.Text>
         <Typography.Title
           level={isMobile ? 3 : 2}
           style={{ marginTop: 8, marginBottom: 8, wordBreak: 'break-word' }}
@@ -51,6 +59,7 @@ export function TopBar({
       </div>
 
       <Button
+        type="primary"
         block={isMobile}
         icon={<ReloadOutlined spin={refreshing} />}
         onClick={onRefresh}

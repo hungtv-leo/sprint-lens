@@ -15,6 +15,18 @@ body {
   margin: 0;
   min-width: 320px;
   overflow-x: hidden;
+  background-color: var(--sl-bg-layout, #fbfbff);
+  /* Brighter mist — lighter nebula washes + soft star dust */
+  background-image:
+    radial-gradient(ellipse 55% 40% at 8% 0%, color-mix(in srgb, var(--sl-primary, #6b7cff) 8%, transparent), transparent 60%),
+    radial-gradient(ellipse 45% 35% at 92% 8%, color-mix(in srgb, var(--sl-orchid, #e879a9) 6%, transparent), transparent 58%),
+    radial-gradient(ellipse 40% 30% at 70% 100%, color-mix(in srgb, var(--sl-aqua, #67e8f9) 7%, transparent), transparent 58%),
+    radial-gradient(circle 1px at 18% 22%, color-mix(in srgb, var(--sl-gold, #f0d78c) 40%, transparent), transparent 2px),
+    radial-gradient(circle 1px at 62% 14%, color-mix(in srgb, #ffffff 55%, transparent), transparent 2px),
+    radial-gradient(circle 1.2px at 84% 36%, color-mix(in srgb, var(--sl-aqua, #67e8f9) 35%, transparent), transparent 2px),
+    radial-gradient(circle 1px at 40% 68%, color-mix(in srgb, #ffffff 40%, transparent), transparent 2px),
+    radial-gradient(circle 1px at 76% 78%, color-mix(in srgb, var(--sl-gold, #f0d78c) 32%, transparent), transparent 2px);
+  background-attachment: fixed;
 }
 
 a {
@@ -26,4 +38,57 @@ svg,
 video,
 canvas {
   max-width: 100%;
+}
+
+html[data-theme='light'] .ant-layout {
+  background: transparent !important;
+}
+
+html[data-theme='dark'] .ant-layout {
+  background: transparent !important;
+}
+
+/* Keep dropdown overlays above page cards */
+.ant-select-dropdown,
+.ant-picker-dropdown,
+.ant-dropdown {
+  z-index: 1100;
+}
+
+/* Ant Table sticky horizontal scrollbar can cover pagination and block clicks. */
+.ant-table-sticky-scroll {
+  display: none !important;
+}
+
+html[data-theme='dark'] body {
+  background-image:
+    radial-gradient(ellipse 60% 42% at 5% 0%, color-mix(in srgb, var(--sl-primary, #93a0ff) 22%, transparent), transparent 58%),
+    radial-gradient(ellipse 48% 36% at 95% 10%, color-mix(in srgb, var(--sl-orchid, #e879a9) 16%, transparent), transparent 55%),
+    radial-gradient(ellipse 42% 32% at 65% 100%, color-mix(in srgb, var(--sl-aqua, #67e8f9) 16%, transparent), transparent 55%),
+    radial-gradient(circle 1.2px at 20% 24%, color-mix(in srgb, var(--sl-gold, #f0d78c) 70%, transparent), transparent 2px),
+    radial-gradient(circle 1px at 58% 12%, rgba(255, 255, 255, 0.55), transparent 2px),
+    radial-gradient(circle 1.4px at 86% 40%, color-mix(in srgb, var(--sl-aqua, #67e8f9) 65%, transparent), transparent 2px),
+    radial-gradient(circle 1px at 36% 70%, rgba(255, 255, 255, 0.4), transparent 2px),
+    radial-gradient(circle 1px at 72% 82%, color-mix(in srgb, var(--sl-gold, #f0d78c) 55%, transparent), transparent 2px);
+}
+
+/* Nebula highlight on primary actions */
+.ant-btn-primary:not(:disabled) {
+  background: linear-gradient(
+    135deg,
+    var(--sl-primary, #6b7cff) 0%,
+    color-mix(in srgb, var(--sl-orchid, #e879a9) 55%, var(--sl-primary, #6b7cff)) 55%,
+    var(--sl-aqua, #67e8f9) 130%
+  );
+  border: none;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--sl-primary, #6b7cff) 25%, transparent),
+    0 4px 18px color-mix(in srgb, var(--sl-primary, #6b7cff) 35%, transparent);
+}
+
+.ant-btn-primary:not(:disabled):hover {
+  filter: brightness(1.05);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--sl-aqua, #67e8f9) 35%, transparent),
+    0 6px 22px color-mix(in srgb, var(--sl-orchid, #e879a9) 30%, transparent);
 }

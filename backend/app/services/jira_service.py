@@ -328,6 +328,7 @@ class JiraService:
             "statuscategorychangedate",
             "duedate",
             "issuetype",
+            "parent",
             "project",
             self.sprint_custom_field,
             "customfield_10002",
@@ -337,14 +338,26 @@ class JiraService:
         self,
         board_id: int,
         assignee: str | None = None,
+        assignees: list[str] | None = None,
         query: str | None = None,
+        updated_from: str | None = None,
+        updated_to: str | None = None,
     ) -> IssuesResponse:
-        cache_key = f"board-issues:{board_id}:{assignee}:{query}"
+        assignee_key = ",".join(assignees or []) if assignees else (assignee or "")
+        cache_key = (
+            f"board-issues:{board_id}:{assignee_key}:{query}:{updated_from}:{updated_to}"
+        )
         cached = self.cache.get(cache_key)
         if cached is not None:
             return cached
 
-        jql = self._build_board_jql(assignee=assignee, query=query)
+        jql = self._build_board_jql(
+            assignee=assignee,
+            assignees=assignees,
+            query=query,
+            updated_from=updated_from,
+            updated_to=updated_to,
+        )
         issues: list[JiraIssue] = []
         start_at = 0
         total = 0
@@ -400,6 +413,7 @@ class JiraService:
         project_keys: list[str],
         sprint: str | None = "active",
         assignee: str | None = None,
+        assignees: list[str] | None = None,
         query: str | None = None,
         updated_from: str | None = None,
         updated_to: str | None = None,
@@ -418,11 +432,15 @@ class JiraService:
             return await self.get_board_issues(
                 board_id=int(board_id),
                 assignee=assignee,
+                assignees=assignees,
                 query=query,
+                updated_from=updated_from,
+                updated_to=updated_to,
             )
 
+        assignee_key = ",".join(assignees or []) if assignees else (assignee or "")
         cache_key = (
-            f"issues:{','.join(project_keys)}:{sprint}:{assignee}:{query}:{updated_from}:{updated_to}"
+            f"issues:{','.join(project_keys)}:{sprint}:{assignee_key}:{query}:{updated_from}:{updated_to}"
         )
         cached = self.cache.get(cache_key)
         if cached is not None:
@@ -432,6 +450,7 @@ class JiraService:
             project_keys,
             sprint=sprint,
             assignee=assignee,
+            assignees=assignees,
             query=query,
             updated_from=updated_from,
             updated_to=updated_to,
@@ -538,6 +557,7 @@ class JiraService:
         priority = fields.get("priority") or {}
         issue_type = fields.get("issuetype") or {}
         project = fields.get("project") or {}
+        parent = fields.get("parent") or {}
         sprint_field = fields.get(self.sprint_custom_field) or []
         story_points_raw = fields.get("customfield_10002")
         story_points: float | None
@@ -545,6 +565,8 @@ class JiraService:
             story_points = float(story_points_raw) if story_points_raw is not None else None
         except (TypeError, ValueError):
             story_points = None
+
+        parent_key = parent.get("key") if isinstance(parent, dict) else None
 
         return JiraIssue(
             key=item["key"],
@@ -564,6 +586,7 @@ class JiraService:
             due_date=fields.get("duedate"),
             issue_type=issue_type.get("name"),
             is_subtask=bool(issue_type.get("subtask")),
+            parent_key=str(parent_key) if parent_key else None,
             project_key=project.get("key", ""),
             project_name=project.get("name", ""),
             sprint_names=[
@@ -583,14 +606,37 @@ class JiraService:
             return f'(key = "{key}" OR summary ~ "{escaped}")'
         return f'summary ~ "{escaped}"'
 
+    def _assignee_clause(
+        self,
+        assignee: str | None,
+        assignees: list[str] | None = None,
+    ) -> str | None:
+        names = [item.strip() for item in (assignees or []) if item and item.strip()]
+        if not names and assignee and assignee.strip():
+            names = [assignee.strip()]
+        if not names:
+            return None
+        if len(names) == 1:
+            return f'assignee = "{names[0]}"'
+        quoted = ", ".join(f'"{name}"' for name in names)
+        return f"assignee in ({quoted})"
+
     def _build_board_jql(
         self,
         assignee: str | None,
         query: str | None,
+        assignees: list[str] | None = None,
+        updated_from: str | None = None,
+        updated_to: str | None = None,
     ) -> str | None:
         clauses: list[str] = []
-        if assignee:
-            clauses.append(f'assignee = "{assignee}"')
+        assignee_clause = self._assignee_clause(assignee, assignees)
+        if assignee_clause:
+            clauses.append(assignee_clause)
+        if updated_from:
+            clauses.append(f'updated >= "{updated_from}"')
+        if updated_to:
+            clauses.append(f'updated <= "{updated_to} 23:59"')
         if query:
             clauses.append(self._build_query_clause(query))
         return " AND ".join(clauses) if clauses else None
@@ -603,6 +649,7 @@ class JiraService:
         query: str | None,
         updated_from: str | None = None,
         updated_to: str | None = None,
+        assignees: list[str] | None = None,
     ) -> str:
         quoted_projects = ", ".join(f'"{key}"' for key in project_keys)
         clauses = [f"project in ({quoted_projects})"]
@@ -612,8 +659,9 @@ class JiraService:
         elif sprint and sprint.isdigit():
             clauses.append(f"sprint = {sprint}")
 
-        if assignee:
-            clauses.append(f'assignee = "{assignee}"')
+        assignee_clause = self._assignee_clause(assignee, assignees)
+        if assignee_clause:
+            clauses.append(assignee_clause)
 
         if updated_from:
             clauses.append(f'updated >= "{updated_from}"')

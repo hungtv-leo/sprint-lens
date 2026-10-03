@@ -63,6 +63,7 @@ export function ProjectFilters({
   return (
     <Card
       size={isMobile ? 'small' : 'default'}
+      style={{ position: 'relative', zIndex: 20 }}
       title={
         <Space>
           <FilterOutlined />
@@ -121,7 +122,7 @@ export function ProjectFilters({
               label: `${project.key} - ${project.name}`,
             }))}
             optionFilterProp="label"
-            getPopupContainer={(node) => node.parentElement ?? document.body}
+            getPopupContainer={() => document.body}
           />
         </Col>
 
@@ -144,7 +145,7 @@ export function ProjectFilters({
                   label: `${item.name} (${boardTypeLabel[item.type] ?? item.type})`,
                 })),
               ]}
-              getPopupContainer={(node) => node.parentElement ?? document.body}
+              getPopupContainer={() => document.body}
             />
           </Col>
         ) : null}
@@ -166,7 +167,7 @@ export function ProjectFilters({
                 label: `${item.name} (${sprintStateLabel[item.state] ?? item.state})`,
               })),
             ]}
-            getPopupContainer={(node) => node.parentElement ?? document.body}
+            getPopupContainer={() => document.body}
           />
         </Col>
 
@@ -197,7 +198,8 @@ export function ProjectFilters({
                 ? 'Không tải được danh sách nhân viên'
                 : 'Không có nhân viên'
             }
-            getPopupContainer={(node) => node.parentElement ?? document.body}
+            getPopupContainer={() => document.body}
+            listHeight={280}
           />
         </Col>
 

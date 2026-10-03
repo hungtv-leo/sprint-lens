@@ -5,6 +5,7 @@ import { BoardPage } from './pages/board-page'
 import { DashboardPage } from './pages/dashboard-page'
 import { KpiPage } from './pages/kpi-page'
 import { OpsCasesPage } from './pages/ops-cases-page'
+import { WeeklyReportPage } from './pages/weekly-report-page'
 
 function App() {
   return (
@@ -13,6 +14,7 @@ function App() {
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/board" element={<BoardPage />} />
+        <Route path="/weekly-report" element={<WeeklyReportPage />} />
         <Route path="/kpi" element={<KpiPage />} />
         <Route path="/ops/cases" element={<OpsCasesPage />} />
         <Route path="/ops" element={<Navigate to="/ops/cases" replace />} />

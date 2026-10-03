@@ -211,3 +211,54 @@ export type OpsCaseStatsResponse = {
   by_handler: OpsHandlerStat[]
   by_work_type: OpsWorkTypeStat[]
 }
+
+export type WeeklyBucketStat = {
+  bucket: string
+  label: string
+  total: number
+}
+
+export type WeeklyAssigneeStat = {
+  assignee: string
+  assignee_display_name: string
+  total: number
+  by_bucket: Record<string, number>
+}
+
+export type WeeklyReportIssue = {
+  key: string
+  summary: string
+  status_name: string
+  status_category: string
+  bucket: string
+  bucket_label: string
+  source: string
+  assignee_name?: string | null
+  assignee_display_name: string
+  project_key: string
+  sprint_names: string[]
+  updated?: string | null
+  url: string
+  is_subtask?: boolean
+  parent_key?: string | null
+  matched?: boolean
+}
+
+export type WeeklyReportTreeIssue = WeeklyReportIssue & {
+  children?: WeeklyReportTreeIssue[]
+}
+
+export type WeeklyReportResponse = {
+  projects: string[]
+  date_from: string
+  date_to: string
+  assignees: string[]
+  adhoc_board_id?: number | null
+  adhoc_board_name?: string | null
+  total: number
+  truncated: boolean
+  by_bucket: WeeklyBucketStat[]
+  by_assignee: WeeklyAssigneeStat[]
+  issues: WeeklyReportIssue[]
+  notes: string[]
+}

@@ -1,6 +1,7 @@
 import {
   AppstoreOutlined,
   BarChartOutlined,
+  CalendarOutlined,
   CustomerServiceOutlined,
   FileExcelOutlined,
   MenuOutlined,
@@ -31,6 +32,7 @@ const navigation: MenuProps['items'] = [
     children: [
       { key: '/dashboard', label: 'Bảng tổng hợp', icon: <BarChartOutlined /> },
       { key: '/board', label: 'Bảng Kanban', icon: <ProjectOutlined /> },
+      { key: '/weekly-report', label: 'Báo cáo tuần', icon: <CalendarOutlined /> },
     ],
   },
   {
@@ -50,11 +52,41 @@ const navigation: MenuProps['items'] = [
 ]
 
 function SidebarBrand() {
+  const { token } = theme.useToken()
+
   return (
     <div style={{ padding: '20px 24px 8px' }}>
-      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-        Sprint Lens
-      </Typography.Text>
+      <div
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 8,
+          marginBottom: 4,
+        }}
+      >
+        <span
+          aria-hidden
+          style={{
+            width: 10,
+            height: 10,
+            borderRadius: 999,
+            background: `linear-gradient(135deg, ${token.colorPrimary}, ${token.colorInfo})`,
+            boxShadow: `0 0 0 3px ${token.colorPrimaryBg}, 0 0 12px ${token.colorPrimary}`,
+          }}
+        />
+        <Typography.Text
+          strong
+          style={{
+            fontSize: 12,
+            letterSpacing: '0.08em',
+            textTransform: 'uppercase',
+            color: token.colorPrimary,
+            textShadow: `0 0 18px ${token.colorPrimaryBg}`,
+          }}
+        >
+          Sprint Lens
+        </Typography.Text>
+      </div>
       <Typography.Title level={4} style={{ marginTop: 8, marginBottom: 0 }}>
         Bảng điều khiển sprint Jira
       </Typography.Title>

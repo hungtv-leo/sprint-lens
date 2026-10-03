@@ -1,6 +1,8 @@
 import { Card, Empty, Flex, Grid, Space, Typography, theme } from 'antd'
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts'
 
+import { chartColors } from '../../theme/palette'
+
 const { useBreakpoint } = Grid
 
 type StatusChartProps = {
@@ -10,7 +12,7 @@ type StatusChartProps = {
   }>
 }
 
-const COLORS = ['#1677ff', '#722ed1', '#52c41a', '#faad14', '#f5222d', '#13c2c2']
+const COLORS = chartColors
 
 export function StatusChart({ data }: StatusChartProps) {
   const { token } = theme.useToken()

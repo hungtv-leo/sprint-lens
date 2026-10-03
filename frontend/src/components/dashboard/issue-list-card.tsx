@@ -1,7 +1,10 @@
-import { Card, Empty, Grid, List, Tag, Typography } from 'antd'
+import { Card, Empty, Grid, List, Tag, Typography, theme } from 'antd'
 
 import type { JiraIssue } from '../../lib/types'
 import { formatDate } from '../../lib/utils'
+import { palette } from '../../theme/palette'
+import { accentTagStyle } from '../../theme/tag-style'
+import { useThemeMode } from '../../theme/theme-provider'
 
 const { useBreakpoint } = Grid
 
@@ -13,15 +16,22 @@ type IssueListCardProps = {
 
 export function IssueListCard({ title, issues, emptyText }: IssueListCardProps) {
   const screens = useBreakpoint()
+  const { token } = theme.useToken()
+  const { mode } = useThemeMode()
   const listHeight = !screens.md ? 280 : 360
+  const accent = title.toLowerCase().includes('testing') ? palette.aqua500 : palette.gold500
+  const isDark = mode === 'dark'
 
   return (
     <Card
       size={!screens.md ? 'small' : 'default'}
       title={title}
       extra={<Typography.Text type="secondary">{issues.length} mục</Typography.Text>}
-      style={{ height: '100%' }}
+      style={{ height: '100%', borderTop: `3px solid ${accent}` }}
       styles={{
+        header: {
+          background: `linear-gradient(90deg, ${accent}16 0%, transparent 70%)`,
+        },
         body: {
           height: listHeight,
           overflowY: 'auto',
@@ -42,7 +52,9 @@ export function IssueListCard({ title, issues, emptyText }: IssueListCardProps) 
           renderItem={(issue) => (
             <List.Item
               key={issue.key}
-              extra={<Tag>{issue.status_name}</Tag>}
+              extra={
+                <Tag style={accentTagStyle(accent, isDark)}>{issue.status_name}</Tag>
+              }
               actions={[
                 <Typography.Text type="secondary" key="assignee">
                   {issue.assignee.display_name}
@@ -57,11 +69,20 @@ export function IssueListCard({ title, issues, emptyText }: IssueListCardProps) 
             >
               <List.Item.Meta
                 title={
-                  <a href={issue.url} target="_blank" rel="noreferrer">
+                  <a
+                    href={issue.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ color: token.colorPrimary }}
+                  >
                     {issue.key}
                   </a>
                 }
-                description={issue.summary}
+                description={
+                  <Typography.Text style={{ color: token.colorTextSecondary }}>
+                    {issue.summary}
+                  </Typography.Text>
+                }
               />
             </List.Item>
           )}

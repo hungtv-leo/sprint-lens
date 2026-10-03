@@ -62,6 +62,7 @@ class JiraIssue(BaseModel):
     due_date: str | None = None
     issue_type: str | None = None
     is_subtask: bool = False
+    parent_key: str | None = None
     project_key: str
     project_name: str
     sprint_names: list[str] = []
